@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { createPortal } from "react-dom";
 import { ArrowUpRight, ChevronDown, ChevronUp, Eraser, Highlighter, Pen, RectangleHorizontal, RotateCcw, Trash2, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Annotation, AnnotationPayload, Point, Tool } from "@/lib/confa-types";
@@ -13,6 +14,7 @@ type Props = {
   onDraft?: (kind: Tool, payload: AnnotationPayload | null) => void;
   canClear?: boolean;
   drafts?: Array<{ id: string; kind: Tool; payload: AnnotationPayload }>;
+  toolbarContainer?: HTMLElement | null;
 };
 
 const tools: Array<{ id: Tool; label: string; icon: typeof Pen }> = [
@@ -52,7 +54,7 @@ function renderAnnotation(id: string, kind: Tool, data: AnnotationPayload, onEra
   return null;
 }
 
-export function AnnotationLayer({ annotations, canDraw = false, onAdd, onAction, onDraft, canClear = false, drafts = [] }: Props) {
+export function AnnotationLayer({ annotations, canDraw = false, onAdd, onAction, onDraft, canClear = false, drafts = [], toolbarContainer }: Props) {
   const [tool, setTool] = useState<Tool>("pen");
   const [toolbarOpen, setToolbarOpen] = useState(true);
   const [color, setColor] = useState(colors[0]);
@@ -98,7 +100,7 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onAction,
       {drafts.map((item) => renderAnnotation(item.id, item.kind, item.payload))}
       {current && renderAnnotation("current", tool, { color, points: current })}
     </svg>
-    {canDraw && <div className="annotation-toolbar absolute bottom-3 left-1/2 z-20 flex max-w-[calc(100%-16px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-2xl border border-white/15 bg-[#12243a]/95 p-1.5 shadow-2xl" role="toolbar" aria-label="Инструменты пометок">
+    {canDraw && toolbarContainer && createPortal(<div className="annotation-toolbar flex max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-white/15 bg-[#12243a]/95 p-1.5 shadow-2xl" role="toolbar" aria-label="Инструменты пометок">
       <Button title={toolbarOpen ? "Свернуть инструменты" : "Развернуть инструменты"} aria-label={toolbarOpen ? "Свернуть инструменты" : "Развернуть инструменты"} aria-expanded={toolbarOpen} variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" onClick={() => setToolbarOpen((open) => !open)}>{toolbarOpen ? <ChevronDown size={18} /> : <ChevronUp size={18} />}</Button>
       {toolbarOpen && <>
       {tools.map(({ id, label, icon: Icon }) => <Button key={id} title={label} aria-label={label} variant={tool === id ? "default" : "ghost"} size="icon" className={tool === id ? "bg-[#6de7d4] text-[#10243a]" : "text-white hover:bg-white/10 hover:text-white"} onClick={() => setTool(id)}><Icon size={18} /></Button>)}
@@ -108,6 +110,6 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onAction,
       <Button title="Отменить свою пометку" aria-label="Отменить свою пометку" variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" onClick={() => void onAction?.("undo")}><RotateCcw size={18} /></Button>
       {canClear && <Button title="Очистить все пометки" aria-label="Очистить все пометки" variant="ghost" size="icon" className="text-white hover:bg-white/10 hover:text-white" onClick={() => void onAction?.("clear")}><Trash2 size={18} /></Button>}
       </>}
-    </div>}
+    </div>, toolbarContainer)}
   </>;
 }

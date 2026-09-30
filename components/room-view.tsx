@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { createPortal } from "react-dom";
 import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
 import { BackgroundProcessor, supportsBackgroundProcessors, type BackgroundProcessorWrapper } from "@livekit/track-processors";
 import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication } from "livekit-client";
-import { Copy, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PanelsTopLeft, PhoneOff, Radio, Users, Video, VideoOff, X } from "lucide-react";
+import { Copy, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, Radio, Users, Video, VideoOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnnotationLayer } from "@/components/annotation-layer";
@@ -19,8 +18,7 @@ type Joined = {
 };
 type Props = { id: string; joined: Joined; initialCamera: boolean; background: VideoBackground | null; onBackgroundChange: (background: VideoBackground | null) => void; onLeave: () => void; onEnded: () => void; connectionError: string };
 
-type PictureInPictureApi = { requestWindow: (options: { width: number; height: number }) => Promise<Window> };
-type FocusController = { setFocusBehavior: (behavior: "focus-captured-surface") => void };
+type FocusController = { setFocusBehavior: (behavior: "no-focus-change") => void };
 
 export function RoomView({ id, joined, initialCamera, background, onBackgroundChange, onLeave, onEnded, connectionError }: Props) {
   const room = useRoomContext();
@@ -36,9 +34,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [mic, setMic] = useState(room.localParticipant.isMicrophoneEnabled);
   const [cam, setCam] = useState(room.localParticipant.isCameraEnabled);
   const [cameraBusy, setCameraBusy] = useState(false);
-  const [pipRoot, setPipRoot] = useState<HTMLElement | null>(null);
+  const [toolbarContainer, setToolbarContainer] = useState<HTMLDivElement | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
-  const pipWindow = useRef<Window | null>(null);
   const stoppingShare = useRef(false);
   const endedRef = useRef(false);
   const cameraStarting = useRef(false);
@@ -53,9 +50,10 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const role = self?.role || joined.member.role;
   const canDraw = role === "host" || (Boolean(state?.room.annotationsEnabled) && Boolean(self?.can_annotate));
   const canPublish = role !== "viewer";
-  const activeScreen = screens.find((track) => track.participant.identity === state?.room.activeShareOwner) || screens[0];
-  const isSharing = Boolean(activeScreen?.participant.identity === joined.member.id);
-  const pipSupported = typeof window !== "undefined" && "documentPictureInPicture" in window;
+  const activeScreen = state?.room.activeShareId
+    ? screens.find((track) => track.participant.identity === state.room.activeShareOwner)
+    : undefined;
+  const isSharing = screens.some((track) => track.participant.identity === joined.member.id);
   const visibleMembers = state?.members.filter((person) => activeIds.has(person.id)) || [];
   const visibleDrafts = drafts.filter((item) => {
     if (item.shareId !== state?.room.activeShareId) return false;
@@ -80,7 +78,6 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       setState(next);
       if (next.room.status !== "open" && !endedRef.current) {
         endedRef.current = true;
-        pipWindow.current?.close();
         room.disconnect();
         onEnded();
       }
@@ -221,43 +218,13 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       if (!endedRef.current) await refresh();
     } catch (cause) { if (!endedRef.current) setError(cause instanceof Error ? cause.message : "Не удалось остановить демонстрацию"); }
     finally {
-      pipWindow.current?.close();
       stoppingShare.current = false;
       setBusy("");
     }
   }, [room, api, refresh]);
 
-  async function openPresenterWindow() {
-    if (pipWindow.current) return;
-    const pip = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture;
-    if (!pip) { setError("Плавающее окно поддерживается в настольных Chrome и Edge"); return; }
-    try {
-      const popup = await pip.requestWindow({ width: 490, height: 640 });
-      popup.document.title = "Конфа · окно ведущего";
-      document.querySelectorAll('link[rel="stylesheet"], style').forEach((style) => popup.document.head.appendChild(style.cloneNode(true)));
-      popup.document.body.style.margin = "0";
-      popup.document.body.style.background = "#0e192c";
-      const root = popup.document.createElement("div");
-      root.style.height = "100vh";
-      popup.document.body.appendChild(root);
-      popup.addEventListener("pagehide", () => {
-        if (pipWindow.current !== popup) return;
-        pipWindow.current = null;
-        setPipRoot(null);
-        if (room.localParticipant.getTrackPublication(Track.Source.ScreenShare) && !endedRef.current && !stoppingShare.current) void stopShare();
-      });
-      pipWindow.current = popup;
-      setPipRoot(root);
-      setError("");
-    } catch { setError("Не удалось открыть окно ведущего"); }
-  }
-
   async function toggleShare() {
     if (isSharing) { await stopShare(); return; }
-    if (role === "host" && pipSupported && !pipWindow.current) {
-      setError("Сначала откройте окно ведущего, затем выберите вкладку для показа");
-      return;
-    }
     if (state?.room.activeShareOwner && state.room.activeShareOwner !== joined.member.id) {
       setError("Другой участник уже показывает экран");
       return;
@@ -265,29 +232,25 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     setBusy("share"); setError("");
     let createdTracks: Awaited<ReturnType<typeof room.localParticipant.createScreenTracks>> = [];
     try {
-      if (role === "host" && pipWindow.current) {
+      if (role === "host") {
         const Controller = (window as Window & { CaptureController?: new () => FocusController }).CaptureController;
-        const controller = Controller && "setFocusBehavior" in Controller.prototype ? new Controller() : undefined;
-        controller?.setFocusBehavior("focus-captured-surface");
-        createdTracks = await room.localParticipant.createScreenTracks({ video: { displaySurface: "browser" }, selfBrowserSurface: "exclude", controller });
-        if (!pipWindow.current) {
-          createdTracks.forEach((track) => track.stop());
-          throw new Error("Окно ведущего закрыто. Откройте его перед повторной демонстрацией");
+        let controller: FocusController | undefined;
+        if (Controller && "setFocusBehavior" in Controller.prototype) {
+          try {
+            controller = new Controller();
+            controller.setFocusBehavior("no-focus-change");
+          } catch { controller = undefined; }
         }
+        createdTracks = await room.localParticipant.createScreenTracks({ video: { displaySurface: "browser" }, selfBrowserSurface: "exclude", controller });
         if (createdTracks[0]?.mediaStreamTrack.getSettings().displaySurface !== "browser") {
           createdTracks.forEach((track) => track.stop());
-          throw new Error("Выберите вкладку браузера, чтобы окно ведущего не попало в трансляцию");
+          throw new Error("Выберите вкладку браузера для демонстрации");
         }
         for (const track of createdTracks) await room.localParticipant.publishTrack(track);
       } else {
         await room.localParticipant.setScreenShareEnabled(true);
       }
       await api("share", { action: "start" });
-      if (role === "host" && pipSupported && !pipWindow.current) {
-        await room.localParticipant.setScreenShareEnabled(false);
-        await api("share", { action: "stop" });
-        throw new Error("Окно ведущего закрыто. Демонстрация остановлена");
-      }
       await refresh();
     } catch (cause) {
       await room.localParticipant.setScreenShareEnabled(false).catch(() => {});
@@ -304,7 +267,6 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     return () => { room.off(RoomEvent.LocalTrackUnpublished, unpublished); };
   }, [room, stopShare]);
 
-  useEffect(() => () => { pipWindow.current?.close(); }, []);
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     const body = message.trim();
@@ -334,7 +296,6 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     try {
       await api("end", {});
       endedRef.current = true;
-      pipWindow.current?.close();
       room.disconnect();
       onEnded();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось закончить конференцию"); }
@@ -342,11 +303,6 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   }
 
   const recordingStatus = state?.recording?.status;
-  const pipPeople = visibleMembers.filter((person) => person.id !== joined.member.id).sort((a, b) => {
-    const aSpeaking = participants.find((person) => person.identity === a.id)?.isSpeaking ? 1 : 0;
-    const bSpeaking = participants.find((person) => person.identity === b.id)?.isSpeaking ? 1 : 0;
-    return bSpeaking - aSpeaking;
-  }).slice(0, 4);
 
   return <main className="flex h-dvh min-h-[540px] flex-col overflow-hidden bg-[#0e192c] text-white">
     <RoomAudioRenderer />
@@ -365,21 +321,26 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     <div className="flex min-h-0 flex-1">
       <section className="flex min-w-0 flex-1 flex-col p-3 sm:p-5">
         <div className="flex min-h-0 flex-1 flex-col gap-3">
-          {activeScreen ? <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#16253b]">
-            <SharedScreen trackRef={activeScreen}>
-              {state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} annotations={state.annotations} canDraw={canDraw && !(role === "host" && isSharing && Boolean(pipRoot))} canClear={role === "host"} onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} />}
-            </SharedScreen>
-            <span className="absolute left-4 top-4 rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white">{activeScreen.participant.name || "Демонстрация экрана"}</span>
-          </div> : <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-[#16253b]/65 px-5 text-center"><MonitorUp size={42} className="mb-4 text-[#6de7d4]" /><h2 className="text-xl font-semibold">Комната готова</h2><p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-400">Включите камеру или покажите экран, чтобы начать совместную работу.</p></div>}
-          <div className={`grid gap-2 overflow-y-auto ${activeScreen ? "max-h-[160px] grid-flow-col auto-cols-[minmax(120px,1fr)] overflow-x-auto" : "min-h-0 flex-1 grid-cols-[repeat(auto-fit,minmax(165px,1fr))] content-center"}`}>
+          <div className={activeScreen
+            ? "flex shrink-0 gap-2 overflow-x-auto pb-1"
+            : "grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto"}>
             {visibleMembers.map((person) => {
               const video = cameras.find((track) => track.participant.identity === person.id);
-              return <div key={person.id} className="relative aspect-video min-h-[100px] overflow-hidden rounded-xl bg-[#213650]">
+              return <div key={person.id} className={`relative min-w-0 overflow-hidden rounded-xl bg-[#213650] ${activeScreen ? "aspect-video w-32 shrink-0 sm:w-44" : "min-h-0"}`}>
                 {video ? <VideoTrack trackRef={video} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><span className="grid h-12 w-12 place-items-center rounded-full bg-[#6de7d4]/20 text-lg font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span></div>}
-                <span className="absolute bottom-2 left-2 max-w-[calc(100%-16px)] truncate rounded bg-[#0b1728]/70 px-2 py-1 text-xs">{person.name}{person.id === joined.member.id ? " (вы)" : ""}{person.raised_hand ? " ✋" : ""}</span>
+                <span className={`absolute left-2 max-w-[calc(100%-16px)] truncate rounded bg-[#0b1728]/70 text-xs ${activeScreen ? "bottom-1 px-1.5 py-0.5" : "bottom-2 px-2 py-1"}`}>{person.name}{person.id === joined.member.id ? " (вы)" : ""}{person.raised_hand ? " ✋" : ""}</span>
               </div>;
             })}
           </div>
+          {activeScreen && <>
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#16253b]">
+              <SharedScreen trackRef={activeScreen}>
+                {state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} annotations={state.annotations} canDraw={canDraw} canClear={role === "host"} onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} toolbarContainer={toolbarContainer} />}
+              </SharedScreen>
+              <span className="absolute left-4 top-4 rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white">{activeScreen.participant.name || "Демонстрация экрана"}</span>
+            </div>
+            {canDraw && <div ref={setToolbarContainer} className="flex min-h-10 shrink-0 justify-center" />}
+          </>}
         </div>
       </section>
 
@@ -414,7 +375,6 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
           <Button variant="secondary" size="icon-lg" title={mic ? "Выключить микрофон" : "Включить микрофон"} aria-label={mic ? "Выключить микрофон" : "Включить микрофон"} className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void toggleMic()}>{mic ? <Mic /> : <MicOff />}</Button>
           <Button variant="secondary" size="icon-lg" title={cam ? "Выключить камеру" : "Включить камеру"} aria-label={cam ? "Выключить камеру" : "Включить камеру"} disabled={cameraBusy} className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void toggleCam()}>{cam ? <Video /> : <VideoOff />}</Button>
           <BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} compact />
-          {role === "host" && pipSupported && <Button variant="secondary" size="sm" title={pipRoot ? "Окно ведущего открыто" : "Открыть окно ведущего"} aria-label={pipRoot ? "Окно ведущего открыто" : "Открыть окно ведущего"} disabled={Boolean(pipRoot)} className="rounded-xl bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void openPresenterWindow()}><PanelsTopLeft />Окно ведущего</Button>}
           <Button variant="secondary" size="icon-lg" title={isSharing ? "Остановить демонстрацию" : "Показать экран"} aria-label={isSharing ? "Остановить демонстрацию" : "Показать экран"} disabled={busy === "share"} className={`rounded-full text-white hover:bg-[#3e5673] ${isSharing ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => void toggleShare()}>{isSharing ? <MonitorX /> : <MonitorUp />}</Button>
         </>}
         <Button variant="secondary" size="icon-lg" title="Поднять или опустить руку" aria-label="Поднять или опустить руку" className={`rounded-full text-white hover:bg-[#3e5673] ${self?.raised_hand ? "bg-amber-500/40" : "bg-[#2d415d]"}`} onClick={() => void action("hand", {})}><Hand /></Button>
@@ -427,21 +387,5 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
         {role !== "host" && <Button variant="destructive" size="sm" className="rounded-xl" onClick={() => { room.disconnect(); onLeave(); }}><PhoneOff size={16} /><span className="hidden sm:inline">Выйти</span></Button>}
       </div>
     </footer>
-    {pipRoot && createPortal(<div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-[#0e192c] p-3 text-white">
-      <div className="flex items-center justify-between gap-2"><strong className="text-sm">Окно ведущего</strong><div className="flex items-center gap-1">{isSharing && <Button variant="secondary" size="xs" onClick={() => void stopShare()}>Остановить показ</Button>}<Button variant="destructive" size="xs" disabled={busy === "end"} onClick={() => void endConference()}>Закончить</Button></div></div>
-      {isSharing && activeScreen ? <div className="relative min-h-[190px] flex-[2] overflow-hidden rounded-xl bg-[#16253b]">
-        <SharedScreen trackRef={activeScreen}>
-          {state?.room.activeShareId && <AnnotationLayer key={`pip-${state.room.activeShareId}`} annotations={state.annotations} canDraw canClear onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} />}
-        </SharedScreen>
-      </div> : <div className="grid min-h-[130px] flex-1 place-items-center rounded-xl border border-dashed border-white/20 px-6 text-center text-sm text-slate-300">Вернитесь на вкладку Конфы и нажмите «Показать экран», затем выберите вкладку браузера.</div>}
-      {state && <Button variant="secondary" size="sm" disabled={busy === "annotationAccess"} className="w-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void action("annotations", { action: "setAccess", enabled: !state.room.annotationsEnabled }, "annotationAccess")}>Пометки: {state.room.annotationsEnabled ? "все" : "только ведущий"}</Button>}
-      <div className="grid grid-cols-4 gap-1.5">
-        {pipPeople.length ? pipPeople.map((person) => {
-          const video = cameras.find((track) => track.participant.identity === person.id);
-          return <div key={person.id} className="relative aspect-video min-w-0 overflow-hidden rounded-lg bg-[#213650]">{video ? <VideoTrack trackRef={video} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</div>}<span className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1 text-[10px]">{person.name}</span></div>;
-        }) : <p className="col-span-4 py-3 text-center text-xs text-slate-400">Других участников пока нет</p>}
-      </div>
-      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-[#17263e]"><h2 className="border-b border-white/10 px-3 py-2 text-xs font-semibold">Чат</h2><div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2">{state?.messages.slice(-8).map((item) => <p key={item.id} className="break-words text-xs"><strong className="text-[#9af4e7]">{item.name}: </strong>{item.body}</p>)}</div><form onSubmit={(event) => void sendMessage(event)} className="flex gap-1.5 border-t border-white/10 p-2"><input aria-label="Сообщение в чате ведущего" maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Сообщение…" className="min-w-0 flex-1 rounded-md border border-white/15 bg-[#213650] px-2 text-xs outline-none" /><Button type="submit" size="xs" disabled={!message.trim() || busy === "message"}>Отправить</Button></form></section>
-    </div>, pipRoot)}
   </main>;
 }
