@@ -232,13 +232,15 @@ function validPoint(value: unknown): value is [number, number] {
 }
 
 function validateAnnotation(kind: string, payload: unknown): string {
-  if (!["pen", "marker", "arrow", "rect", "text"].includes(kind) || !payload || typeof payload !== "object") throw new AppError("Некорректная пометка");
+  if (!["pen", "line", "arrow", "dashed", "marker", "rect", "circle", "triangle", "hexagon", "text"].includes(kind) || !payload || typeof payload !== "object") throw new AppError("Некорректная пометка");
   const data = payload as Record<string, unknown>;
   if (typeof data.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(data.color)) throw new AppError("Некорректный цвет");
   if (kind === "text") {
     if (!validPoint(data.point) || typeof data.text !== "string" || !data.text.trim() || data.text.length > 140) throw new AppError("Некорректный текст");
-  } else if (!Array.isArray(data.points) || data.points.length < 2 || data.points.length > 200 || !data.points.every(validPoint)) {
-    throw new AppError("Некорректные координаты");
+  } else {
+    const maxPoints = kind === "pen" || kind === "marker" ? 200 : 2;
+    if (!Array.isArray(data.points) || data.points.length < 2 || data.points.length > maxPoints || !data.points.every(validPoint)) throw new AppError("Некорректные координаты");
+    if (data.strokeWidth !== undefined && (!Number.isInteger(data.strokeWidth) || (data.strokeWidth as number) < 1 || (data.strokeWidth as number) > 24)) throw new AppError("Некорректная толщина");
   }
   const encoded = JSON.stringify(data);
   if (encoded.length > 8000) throw new AppError("Пометка слишком большая");
