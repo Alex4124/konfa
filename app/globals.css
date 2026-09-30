@@ -1,0 +1,60 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../vendor/shadcn-tailwind-4.13.0.css";
+
+:root {
+  --background: #0e192c;
+  --foreground: #f7fafc;
+  --card: #17263e;
+  --card-foreground: #f7fafc;
+  --popover: #1c2c45;
+  --popover-foreground: #f7fafc;
+  --primary: #6de7d4;
+  --primary-foreground: #10243a;
+  --secondary: #243651;
+  --secondary-foreground: #edf6f8;
+  --muted: #243651;
+  --muted-foreground: #aabbd0;
+  --accent: #2b4560;
+  --accent-foreground: #f7fafc;
+  --destructive: #e46c76;
+  --border: #3b5069;
+  --input: #3b5069;
+  --ring: #6de7d4;
+  --radius: .85rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --font-sans: Arial, Helvetica, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground); }
+button { cursor: pointer; }
+.home-shell { background: radial-gradient(circle at 80% 35%, #25436b 0, transparent 37%), radial-gradient(circle at 13% 86%, #17334a 0, transparent 30%), #0e192c; }
+.brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 14px; background: #6de7d4; color: #10243a; }
+.preview-tile { display: flex; height: 80px; align-items: center; justify-content: center; border-radius: 14px; background: #334a67; position: relative; }
+.preview-tile span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: #6de7d4; color: #10243a; font-weight: 700; }
+.preview-tile small { position: absolute; left: 10px; bottom: 7px; font-size: 11px; color: white; }
+.preview-control { display: inline-grid; height: 38px; width: 38px; place-items: center; border-radius: 50%; background: #2a405e; color: white; }
