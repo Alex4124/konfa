@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { AwsClient } from "aws4fetch";
 
 export type RoomKind = "meeting" | "webinar";
 export type Role = "host" | "speaker" | "viewer";
@@ -36,10 +37,17 @@ export function mediaConfig() {
 
 export function recordingConfig() {
   const { R2_S3_ENDPOINT, R2_S3_ACCESS_KEY, R2_S3_SECRET_KEY, R2_S3_BUCKET, PUBLIC_SITE_URL } = env;
-  if (!R2_S3_ENDPOINT || !R2_S3_ACCESS_KEY || !R2_S3_SECRET_KEY || !R2_S3_BUCKET || !PUBLIC_SITE_URL || !env.BUCKET) {
+  if (!R2_S3_ENDPOINT || !R2_S3_ACCESS_KEY || !R2_S3_SECRET_KEY || !R2_S3_BUCKET || !PUBLIC_SITE_URL) {
     throw new AppError("Запись пока не настроена. Нужны доступ LiveKit к R2 и адрес сайта.", 503);
   }
   return { endpoint: R2_S3_ENDPOINT, accessKey: R2_S3_ACCESS_KEY, secretKey: R2_S3_SECRET_KEY, bucket: R2_S3_BUCKET, siteUrl: PUBLIC_SITE_URL };
+}
+
+export async function r2ObjectRequest(method: "HEAD" | "GET", objectKey: string, range?: string | null): Promise<Response> {
+  const config = recordingConfig();
+  const url = `${config.endpoint.replace(/\/$/, "")}/${encodeURIComponent(config.bucket)}/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
+  const client = new AwsClient({ service: "s3", region: "auto", accessKeyId: config.accessKey, secretAccessKey: config.secretKey });
+  return client.fetch(url, { method, headers: range ? { Range: range } : undefined });
 }
 
 export function json(data: unknown, status = 200): Response {

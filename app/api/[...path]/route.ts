@@ -1,8 +1,7 @@
-import { env } from "cloudflare:workers";
 import {
   AppError, appToken, authorize, authorizeState, broadcast, db, egressToken,
   errorResponse, grants, joinToken, json, livekitRequest, mediaConfig,
-  randomSecret, readJson, recordingConfig, recordingShareToken, requiredString, requireHost,
+  r2ObjectRequest, randomSecret, readJson, recordingConfig, recordingShareToken, requiredString, requireHost,
   roomById, sha256, verifyToken, type MemberRow, type RecordingRow, type RoomKind,
 } from "@/lib/confa-server";
 
@@ -43,9 +42,15 @@ async function refreshRecording(id: string): Promise<void> {
   const now = Date.now();
   if (recording.last_checked_at && now - recording.last_checked_at < 8000) return;
   await database.prepare("UPDATE recordings SET last_checked_at = ? WHERE id = ?").bind(now, id).run();
-  if (recording.status === "processing" && env.BUCKET && await env.BUCKET.head(recording.object_key)) {
-    await database.prepare("UPDATE recordings SET status = 'ready', ended_at = COALESCE(ended_at, ?), expires_at = COALESCE(expires_at, ?) WHERE id = ?").bind(now, now + 30 * 86400_000, id).run();
-    return;
+  if (recording.status === "processing") {
+    try {
+      const object = await r2ObjectRequest("HEAD", recording.object_key);
+      if (object.ok) {
+        await database.prepare("UPDATE recordings SET status = 'ready', ended_at = COALESCE(ended_at, ?), expires_at = COALESCE(expires_at, ?) WHERE id = ?").bind(now, now + 30 * 86400_000, id).run();
+        return;
+      }
+      if (object.status !== 404) console.error("Could not inspect R2 recording", object.status);
+    } catch (error) { console.error("Could not inspect R2 recording", error); }
   }
   if (recording.egress_id) {
     try {
@@ -78,33 +83,21 @@ async function get(request: Request): Promise<Response> {
 }
 
 async function recordingFile(request: Request, token: string): Promise<Response> {
-  if (!env.BUCKET) throw new AppError("Хранилище недоступно", 503);
   const recording = await recordingByToken(token);
   if (!recording || recording.status !== "ready" || !recording.expires_at || recording.expires_at <= Date.now()) throw new AppError("Запись недоступна или срок ссылки истёк", 404);
-  const head = await env.BUCKET.head(recording.object_key);
-  if (!head) throw new AppError("Файл записи не найден", 404);
-  const range = request.headers.get("Range");
-  let offset = 0;
-  let length = head.size;
-  let status = 200;
-  if (range) {
-    const match = /^bytes=(\d+)-(\d*)$/.exec(range);
-    if (!match) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${head.size}` } });
-    offset = Number(match[1]);
-    const end = match[2] ? Math.min(Number(match[2]), head.size - 1) : head.size - 1;
-    if (offset >= head.size || end < offset) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${head.size}` } });
-    length = end - offset + 1;
-    status = 206;
-  }
-  const object = await env.BUCKET.get(recording.object_key, { range: { offset, length } });
-  if (!object) throw new AppError("Файл записи не найден", 404);
+  const object = await r2ObjectRequest("GET", recording.object_key, request.headers.get("Range"));
+  if (object.status === 404) throw new AppError("Файл записи не найден", 404);
+  if (object.status !== 200 && object.status !== 206 && object.status !== 416) throw new AppError("Хранилище временно недоступно", 502);
   const headers = new Headers({
-    "Content-Type": "video/mp4", "Content-Length": String(length),
+    "Content-Type": "video/mp4",
     "Accept-Ranges": "bytes", "Cache-Control": "private, no-store",
     "Content-Disposition": `inline; filename="confa-${recording.id}.mp4"`,
   });
-  if (status === 206) headers.set("Content-Range", `bytes ${offset}-${offset + length - 1}/${head.size}`);
-  return new Response(object.body, { status, headers });
+  for (const name of ["Content-Length", "Content-Range"]) {
+    const value = object.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  return new Response(object.status === 416 ? null : object.body, { status: object.status, headers });
 }
 
 async function recordingByToken(token: string): Promise<RecordingRow> {

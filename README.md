@@ -5,7 +5,7 @@
 ## Настройка облачных сервисов
 
 1. Создайте проект в [LiveKit Cloud](https://cloud.livekit.io/). Возьмите WebSocket URL проекта, API key и API secret.
-2. Создайте R2 bucket и S3 API token с доступом Object Read & Write **только** к этому bucket. R2 bucket должен быть тем же, что связан с Site как `BUCKET`.
+2. Создайте R2 bucket в своей учётной записи Cloudflare и S3 API token с доступом Object Read & Write **только** к этому bucket. LiveKit Egress загружает видео прямо в него; сайт читает запись через S3 API R2.
 3. Добавьте в настройки среды Site секреты `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `R2_S3_ACCESS_KEY`, `R2_S3_SECRET_KEY`. Добавьте обычные переменные `LIVEKIT_URL` (wss URL проекта), `R2_S3_ENDPOINT` (полный HTTPS S3 endpoint R2), `R2_S3_BUCKET` (имя bucket) и `PUBLIC_SITE_URL` (публичный HTTPS адрес этого Site). Секреты не кладите в исходники или `.env` под Git.
 4. В R2 настройте lifecycle rule: удалять объекты с префиксом `recordings/` через 30 дней. Приложение прекращает выдавать файл точно по сроку в базе; удаление объекта самим R2 может занять до 24 часов.
 5. После изменения переменных среды опубликуйте новую версию Site, чтобы они вступили в силу.
