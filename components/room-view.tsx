@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
 import { BackgroundProcessor, supportsBackgroundProcessors, type BackgroundProcessorWrapper } from "@livekit/track-processors";
 import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication } from "livekit-client";
-import { Copy, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, Radio, Users, Video, VideoOff, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Hand, LayoutGrid, List, Maximize2, MessageSquare, Mic, MicOff, Minimize2, MonitorUp, MonitorX, PhoneOff, Radio, Users, Video, VideoOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnnotationLayer } from "@/components/annotation-layer";
@@ -28,6 +28,10 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [state, setState] = useState<RoomState | null>(null);
   const [error, setError] = useState("");
   const [panel, setPanel] = useState<"chat" | "people" | null>("chat");
+  const [expandedShareId, setExpandedShareId] = useState<string | null>(null);
+  const [overlayView, setOverlayView] = useState<"tiles" | "list">("tiles");
+  const [overlayCollapsed, setOverlayCollapsed] = useState(false);
+  const [participantsOnTop, setParticipantsOnTop] = useState(true);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
   const [drafts, setDrafts] = useState<Array<{ id: string; shareId: string; kind: Tool; payload: AnnotationPayload }>>([]);
@@ -35,6 +39,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [cam, setCam] = useState(room.localParticipant.isCameraEnabled);
   const [cameraBusy, setCameraBusy] = useState(false);
   const [toolbarContainer, setToolbarContainer] = useState<HTMLDivElement | null>(null);
+  const presentationRef = useRef<HTMLDivElement>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   const stoppingShare = useRef(false);
   const endedRef = useRef(false);
@@ -53,6 +58,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const activeScreen = state?.room.activeShareId
     ? screens.find((track) => track.participant.identity === state.room.activeShareOwner)
     : undefined;
+  const hasActiveScreen = Boolean(activeScreen);
+  const expanded = Boolean(activeScreen && state?.room.activeShareId === expandedShareId);
   const isSharing = screens.some((track) => track.participant.identity === joined.member.id);
   const visibleMembers = state?.members.filter((person) => activeIds.has(person.id)) || [];
   const visibleDrafts = drafts.filter((item) => {
@@ -89,6 +96,25 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     const timer = window.setInterval(() => void refresh(), 3000);
     return () => { window.clearTimeout(initial); window.clearInterval(timer); };
   }, [refresh]);
+
+  useEffect(() => {
+    const element = presentationRef.current;
+    if (!hasActiveScreen || !element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setParticipantsOnTop(entry.contentRect.width >= entry.contentRect.height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasActiveScreen, expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpandedShareId(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [expanded]);
 
   useEffect(() => {
     const onData = (payload: Uint8Array, participant?: { identity: string }, _kind?: unknown, topic?: string) => {
@@ -302,11 +328,43 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     finally { setBusy(""); }
   }
 
+  function renderParticipantTile(person: RoomState["members"][number], layout: "grid" | "top" | "left") {
+    const video = cameras.find((track) => track.participant.identity === person.id);
+    const size = layout === "grid" ? "min-h-0" : layout === "top" ? "h-full aspect-video shrink-0" : "w-full aspect-video shrink-0";
+    return <div key={person.id} className={`relative min-w-0 overflow-hidden rounded-xl bg-[#213650] ${size}`}>
+      {video ? <VideoTrack trackRef={video} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><span className="grid h-12 w-12 place-items-center rounded-full bg-[#6de7d4]/20 text-lg font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span></div>}
+      <span className={`absolute left-2 max-w-[calc(100%-16px)] truncate rounded bg-[#0b1728]/70 text-xs ${layout === "grid" ? "bottom-2 px-2 py-1" : "bottom-1 px-1.5 py-0.5"}`}>{person.name}{person.id === joined.member.id ? " (вы)" : ""}{person.raised_hand ? " ✋" : ""}</span>
+    </div>;
+  }
+
+  function renderParticipantList() {
+    return <>
+      {role === "host" && state && <Button variant="secondary" size="sm" disabled={busy === "annotationAccess"} className="mb-3 w-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void action("annotations", { action: "setAccess", enabled: !state.room.annotationsEnabled }, "annotationAccess")}>Пометки: {state.room.annotationsEnabled ? "все" : "только ведущий"}</Button>}
+      <p className="px-2 pb-2 text-xs uppercase tracking-[.12em] text-slate-400">В комнате · {visibleMembers.length}</p>
+      {visibleMembers.map((person) => <div key={person.id} className="mb-2 rounded-xl bg-[#20344e] p-3">
+        <div className="flex items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#6de7d4]/20 text-sm font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{person.name}{person.id === joined.member.id ? " (вы)" : ""}</p><p className="text-xs text-slate-400">{person.role === "host" ? "Ведущий" : person.role === "speaker" ? "Выступающий" : "Зритель"}{person.raised_hand ? " · поднял руку" : ""}</p></div></div>
+        {role === "host" && person.id !== joined.member.id && <div className="mt-3 flex flex-wrap gap-1.5">
+          {joined.kind === "webinar" && <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "role", role: person.role === "viewer" ? "speaker" : "viewer" })}>{person.role === "viewer" ? "На сцену" : "В зрители"}</Button>}
+          <Button size="xs" variant="secondary" disabled={!state?.room.annotationsEnabled} onClick={() => void action(`members/${person.id}`, { action: "annotation", enabled: !person.can_annotate })}>{person.can_annotate ? "Запретить пометки" : "Разрешить пометки"}</Button>
+          <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "mute" })}>Выключить звук</Button>
+          <Button size="xs" variant="destructive" onClick={() => { if (confirm(`Удалить участника ${person.name}?`)) void action(`members/${person.id}`, { action: "remove" }); }}>Удалить</Button>
+        </div>}
+      </div>)}
+    </>;
+  }
+
+  function expandScreen() {
+    if (!activeScreen || !state?.room.activeShareId) return;
+    setOverlayView("tiles");
+    setOverlayCollapsed(false);
+    setExpandedShareId(state.room.activeShareId);
+  }
+
   const recordingStatus = state?.recording?.status;
 
-  return <main className="flex h-dvh min-h-[540px] flex-col overflow-hidden bg-[#0e192c] text-white">
+  return <main className={`relative flex h-dvh flex-col overflow-hidden bg-[#0e192c] text-white ${expanded ? "min-h-0" : "min-h-[540px]"}`}>
     <RoomAudioRenderer />
-    <header className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-2 sm:px-6">
+    {!expanded && <header className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-2 sm:px-6">
       <div className="flex min-w-0 items-center gap-3"><span className="brand-mark !h-9 !w-9 !rounded-xl"><Video size={19} /></span><div className="min-w-0"><h1 className="truncate text-base font-semibold">{joined.kind === "webinar" ? "Вебинар" : "Встреча"}</h1><p className="text-xs text-slate-400">{visibleMembers.length} из 50 участников</p></div></div>
       <div className="flex flex-wrap items-center justify-end gap-2">
         {recordingStatus === "recording" && <span className="flex items-center gap-2 rounded-full bg-rose-500/15 px-3 py-1.5 text-xs font-medium text-rose-200"><span className="h-2 w-2 animate-pulse rounded-full bg-rose-400" /> Идёт запись</span>}
@@ -314,37 +372,60 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
         <Button variant="outline" size="sm" className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => void copyGuestLink()}><Copy size={15} /><span className="hidden sm:inline">Ссылка для гостей</span></Button>
         {role === "host" && <Button variant="destructive" size="sm" disabled={busy === "end"} className="rounded-xl" onClick={() => void endConference()}><PhoneOff size={16} />Закончить конференцию</Button>}
       </div>
-    </header>
+    </header>}
 
-    {(error || connectionError) && <div role="alert" className="flex items-center justify-between gap-3 bg-rose-500/15 px-5 py-2 text-sm text-rose-100"><span>{connectionError || error}</span><button aria-label="Закрыть сообщение" onClick={() => setError("")}><X size={16} /></button></div>}
+    {(error || connectionError) && <div role="alert" className={`flex items-center justify-between gap-3 bg-rose-500/90 px-5 py-2 text-sm text-white ${expanded ? "absolute left-1/2 top-14 z-50 w-[min(90vw,560px)] -translate-x-1/2 rounded-xl shadow-2xl" : ""}`}><span>{connectionError || error}</span><button aria-label="Закрыть сообщение" onClick={() => setError("")}><X size={16} /></button></div>}
 
     <div className="flex min-h-0 flex-1">
-      <section className="flex min-w-0 flex-1 flex-col p-3 sm:p-5">
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className={activeScreen
-            ? "flex shrink-0 gap-2 overflow-x-auto pb-1"
-            : "grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto"}>
-            {visibleMembers.map((person) => {
-              const video = cameras.find((track) => track.participant.identity === person.id);
-              return <div key={person.id} className={`relative min-w-0 overflow-hidden rounded-xl bg-[#213650] ${activeScreen ? "aspect-video w-32 shrink-0 sm:w-44" : "min-h-0"}`}>
-                {video ? <VideoTrack trackRef={video} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><span className="grid h-12 w-12 place-items-center rounded-full bg-[#6de7d4]/20 text-lg font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span></div>}
-                <span className={`absolute left-2 max-w-[calc(100%-16px)] truncate rounded bg-[#0b1728]/70 text-xs ${activeScreen ? "bottom-1 px-1.5 py-0.5" : "bottom-2 px-2 py-1"}`}>{person.name}{person.id === joined.member.id ? " (вы)" : ""}{person.raised_hand ? " ✋" : ""}</span>
-              </div>;
-            })}
-          </div>
-          {activeScreen && <>
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#16253b]">
-              <SharedScreen trackRef={activeScreen}>
+      <section className={`flex min-w-0 flex-1 flex-col ${activeScreen ? "" : "p-3 sm:p-5"}`}>
+        {activeScreen ? <div ref={presentationRef} className={`relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0e192c] ${participantsOnTop ? "flex-col" : "flex-row"}`}>
+          {!expanded && <div aria-label="Видео участников" className={participantsOnTop
+            ? "flex h-[clamp(88px,12vh,136px)] shrink-0 gap-2 overflow-x-auto px-2 py-1"
+            : "flex w-[clamp(100px,15vw,176px)] shrink-0 flex-col gap-2 overflow-y-auto px-1 py-2"}>
+            {visibleMembers.map((person) => renderParticipantTile(person, participantsOnTop ? "top" : "left"))}
+          </div>}
+
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+              <SharedScreen trackRef={activeScreen} frameless>
                 {state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} annotations={state.annotations} canDraw={canDraw} canClear={role === "host"} onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} toolbarContainer={toolbarContainer} />}
               </SharedScreen>
-              <span className="absolute left-4 top-4 rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white">{activeScreen.participant.name || "Демонстрация экрана"}</span>
+              {!expanded && <span className="absolute left-3 top-3 rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white">{activeScreen.participant.name || "Демонстрация экрана"}</span>}
             </div>
-            {canDraw && <div ref={setToolbarContainer} className="flex min-h-10 shrink-0 justify-center" />}
-          </>}
-        </div>
+            {canDraw && <div ref={setToolbarContainer} className={expanded
+              ? "absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-24px)] -translate-x-1/2 justify-center"
+              : "flex min-h-10 shrink-0 justify-center"} />}
+          </div>
+
+          <Button variant="secondary" size="icon-lg" title={expanded ? "Свернуть экран" : "Развернуть экран"} aria-label={expanded ? "Свернуть экран" : "Развернуть экран"} className="absolute right-3 top-3 z-40 bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a]" onClick={() => expanded ? setExpandedShareId(null) : expandScreen()}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
+
+          {expanded && <div className={`absolute z-30 flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/15 bg-[#14243a]/90 shadow-2xl backdrop-blur-md ${participantsOnTop
+            ? overlayCollapsed ? "left-3 top-3" : overlayView === "tiles" ? "left-3 right-16 top-3 max-h-[min(50vh,440px)]" : "left-3 top-3 max-h-[min(50vh,440px)] w-[min(360px,75vw)]"
+            : overlayCollapsed ? "left-3 top-3" : overlayView === "tiles" ? "bottom-3 left-3 top-3 w-[clamp(110px,16vw,180px)]" : "bottom-3 left-3 top-3 w-[min(340px,75vw)]"}`}>
+            <div className="flex shrink-0 items-center justify-between gap-1 p-1.5">
+              {overlayCollapsed ? <Button variant="ghost" size="sm" aria-label="Развернуть панель участников" aria-expanded={false} className="text-white hover:bg-white/10 hover:text-white" onClick={() => setOverlayCollapsed(false)}><Users size={16} />{visibleMembers.length}{participantsOnTop ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</Button> : <>
+                <span className="min-w-0 truncate px-1 text-xs text-slate-200">{visibleMembers.length}</span>
+                <div className="flex items-center gap-0.5">
+                  <Button variant={overlayView === "tiles" ? "secondary" : "ghost"} size="icon-xs" title="Видео участников" aria-label="Видео участников" aria-pressed={overlayView === "tiles"} className="text-white hover:bg-white/10 hover:text-white" onClick={() => setOverlayView("tiles")}><LayoutGrid size={15} /></Button>
+                  <Button variant={overlayView === "list" ? "secondary" : "ghost"} size="icon-xs" title="Список участников" aria-label="Список участников" aria-pressed={overlayView === "list"} className="text-white hover:bg-white/10 hover:text-white" onClick={() => setOverlayView("list")}><List size={15} /></Button>
+                  <Button variant="ghost" size="icon-xs" title="Свернуть панель участников" aria-label="Свернуть панель участников" aria-expanded={true} className="text-white hover:bg-white/10 hover:text-white" onClick={() => setOverlayCollapsed(true)}>{participantsOnTop ? <ChevronUp size={15} /> : <ChevronLeft size={15} />}</Button>
+                </div>
+              </>}
+            </div>
+            {!overlayCollapsed && (overlayView === "tiles"
+              ? <div aria-label="Видео участников" className={participantsOnTop
+                ? "flex h-[clamp(84px,13vh,120px)] min-h-0 gap-2 overflow-x-auto p-2"
+                : "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2"}>
+                {visibleMembers.map((person) => renderParticipantTile(person, participantsOnTop ? "top" : "left"))}
+              </div>
+              : <div aria-label="Список участников" className="min-h-0 flex-1 overflow-y-auto p-3">{renderParticipantList()}</div>)}
+          </div>}
+        </div> : <div className="grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
+          {visibleMembers.map((person) => renderParticipantTile(person, "grid"))}
+        </div>}
       </section>
 
-      {panel && <aside className="z-10 flex w-[min(360px,100vw)] shrink-0 flex-col border-l border-white/10 bg-[#17263e] max-md:absolute max-md:bottom-[72px] max-md:right-0 max-md:top-16 max-md:shadow-2xl">
+      {!expanded && panel && <aside className="z-10 flex w-[min(360px,100vw)] shrink-0 flex-col border-l border-white/10 bg-[#17263e] max-md:absolute max-md:bottom-[72px] max-md:right-0 max-md:top-16 max-md:shadow-2xl">
         <Tabs value={panel} onValueChange={(value) => setPanel(value as "chat" | "people")} className="flex h-full min-h-0 flex-col gap-0">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><TabsList className="bg-[#283a54]"><TabsTrigger value="chat">Чат</TabsTrigger><TabsTrigger value="people">Участники</TabsTrigger></TabsList><Button variant="ghost" size="icon" aria-label="Закрыть панель" className="text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setPanel(null)}><X /></Button></div>
           <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
@@ -352,23 +433,13 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
             <form onSubmit={(event) => void sendMessage(event)} className="flex gap-2 border-t border-white/10 p-3"><input aria-label="Сообщение" maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Написать сообщение…" className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-[#213650] px-3 text-sm outline-none focus:border-[#6de7d4]" /><Button type="submit" disabled={!message.trim() || busy === "message"} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]">Отправить</Button></form>
           </TabsContent>
           <TabsContent value="people" className="min-h-0 flex-1 overflow-y-auto p-3">
-            {role === "host" && state && <Button variant="secondary" size="sm" disabled={busy === "annotationAccess"} className="mb-3 w-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void action("annotations", { action: "setAccess", enabled: !state.room.annotationsEnabled }, "annotationAccess")}>Пометки: {state.room.annotationsEnabled ? "все" : "только ведущий"}</Button>}
-            <p className="px-2 pb-2 text-xs uppercase tracking-[.12em] text-slate-400">В комнате · {visibleMembers.length}</p>
-            {visibleMembers.map((person) => <div key={person.id} className="mb-2 rounded-xl bg-[#20344e] p-3">
-              <div className="flex items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#6de7d4]/20 text-sm font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{person.name}{person.id === joined.member.id ? " (вы)" : ""}</p><p className="text-xs text-slate-400">{person.role === "host" ? "Ведущий" : person.role === "speaker" ? "Выступающий" : "Зритель"}{person.raised_hand ? " · поднял руку" : ""}</p></div></div>
-              {role === "host" && person.id !== joined.member.id && <div className="mt-3 flex flex-wrap gap-1.5">
-                {joined.kind === "webinar" && <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "role", role: person.role === "viewer" ? "speaker" : "viewer" })}>{person.role === "viewer" ? "На сцену" : "В зрители"}</Button>}
-                <Button size="xs" variant="secondary" disabled={!state?.room.annotationsEnabled} onClick={() => void action(`members/${person.id}`, { action: "annotation", enabled: !person.can_annotate })}>{person.can_annotate ? "Запретить пометки" : "Разрешить пометки"}</Button>
-                <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "mute" })}>Выключить звук</Button>
-                <Button size="xs" variant="destructive" onClick={() => { if (confirm(`Удалить участника ${person.name}?`)) void action(`members/${person.id}`, { action: "remove" }); }}>Удалить</Button>
-              </div>}
-            </div>)}
+            {renderParticipantList()}
           </TabsContent>
         </Tabs>
       </aside>}
     </div>
 
-    <footer className="flex min-h-[72px] items-center justify-between gap-2 border-t border-white/10 bg-[#15243a] px-3 sm:px-6">
+    {!expanded && <footer className="flex min-h-[72px] items-center justify-between gap-2 border-t border-white/10 bg-[#15243a] px-3 sm:px-6">
       <div className="hidden min-w-0 sm:block"><p className="truncate text-sm font-medium">{joined.member.name}</p><p className="text-xs text-slate-400">{role === "host" ? "Ведущий" : role === "speaker" ? "Выступающий" : "Зритель"}</p></div>
       <div className="flex min-w-0 flex-1 items-center justify-start gap-1.5 overflow-x-auto sm:justify-center sm:gap-2">
         {canPublish && <>
@@ -386,6 +457,6 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
         {state?.recording?.url && <a href={state.recording.url} target="_blank" rel="noreferrer" className="hidden text-xs text-[#9af4e7] underline sm:inline">Открыть запись</a>}
         {role !== "host" && <Button variant="destructive" size="sm" className="rounded-xl" onClick={() => { room.disconnect(); onLeave(); }}><PhoneOff size={16} /><span className="hidden sm:inline">Выйти</span></Button>}
       </div>
-    </footer>
+    </footer>}
   </main>;
 }

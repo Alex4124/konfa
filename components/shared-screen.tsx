@@ -5,7 +5,7 @@ import { VideoTrack } from "@livekit/components-react";
 
 type TrackRef = NonNullable<ComponentProps<typeof VideoTrack>["trackRef"]>;
 
-export function SharedScreen({ trackRef, children, className = "" }: { trackRef: TrackRef; children?: ReactNode; className?: string }) {
+export function SharedScreen({ trackRef, children, className = "", frameless = false }: { trackRef: TrackRef; children?: ReactNode; className?: string; frameless?: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const [bounds, setBounds] = useState<{ width: number; height: number } | null>(null);
   const settings = trackRef.publication.track?.mediaStreamTrack?.getSettings();
@@ -26,7 +26,7 @@ export function SharedScreen({ trackRef, children, className = "" }: { trackRef:
   }, [ratio]);
 
   return <div ref={container} className={`relative flex h-full w-full items-center justify-center overflow-hidden ${className}`}>
-    <div className="relative overflow-hidden rounded-lg bg-black" style={bounds ? { width: bounds.width, height: bounds.height } : { width: "100%", aspectRatio: ratio, maxHeight: "100%" }}>
+    <div className={`relative overflow-hidden bg-black ${frameless ? "" : "rounded-lg"}`} style={bounds ? { width: bounds.width, height: bounds.height } : { width: "100%", aspectRatio: ratio, maxHeight: "100%" }}>
       <VideoTrack trackRef={trackRef} className="absolute inset-0 h-full w-full object-contain" />
       {children}
     </div>
