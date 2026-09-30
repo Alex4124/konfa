@@ -302,7 +302,10 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     void room.localParticipant.publishData(data, { reliable: false, topic: "confa-annotation-draft" }).catch(() => {});
   }
   async function addAnnotation(kind: Tool, payload: AnnotationPayload) {
-    await action("annotations", { action: "add", kind, payload });
+    return Boolean(await action("annotations", { action: "add", kind, payload }));
+  }
+  async function moveAnnotation(targetId: string, dx: number, dy: number) {
+    return Boolean(await action("annotations", { action: "move", targetId, dx, dy }));
   }
   async function annotationAction(name: "undo" | "clear" | "erase", targetId?: string) {
     await action("annotations", { action: name, targetId });
@@ -384,7 +387,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
           <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
               <SharedScreen trackRef={activeScreen} frameless>
-                {state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} annotations={state.annotations} canDraw={canDraw} canClear={role === "host"} onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} toolbarContainer={toolbarContainer} />}
+                {state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} annotations={state.annotations} canDraw={canDraw} canClear={role === "host"} memberId={joined.member.id} onAdd={addAnnotation} onMove={moveAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} toolbarContainer={toolbarContainer} />}
               </SharedScreen>
               {!expanded && <span className="absolute left-3 top-3 rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white">{activeScreen.participant.name || "Демонстрация экрана"}</span>}
             </div>

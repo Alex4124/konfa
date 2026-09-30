@@ -4,6 +4,8 @@ import {
   r2ObjectRequest, randomSecret, readJson, recordingConfig, recordingShareToken, requiredString, requireHost,
   roomById, sha256, verifyToken, type MemberRow, type RecordingRow, type RoomKind,
 } from "@/lib/confa-server";
+import { translateAnnotation } from "@/lib/annotation-geometry";
+import type { AnnotationPayload } from "@/lib/confa-types";
 
 export const runtime = "edge";
 
@@ -267,6 +269,19 @@ async function updateAnnotations(request: Request, id: string, member: MemberRow
     await database.prepare("INSERT INTO annotations (id, room_id, share_id, author_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(annotation.id, id, room.active_share_id, member.id, kind, payload, annotation.created_at).run();
     await broadcast(id, { type: "state-changed" });
     return json(annotation, 201);
+  }
+  if (input.action === "move") {
+    const targetId = requiredString(input.targetId, "пометку", 100);
+    if (typeof input.dx !== "number" || typeof input.dy !== "number" || !Number.isFinite(input.dx) || !Number.isFinite(input.dy) || Math.abs(input.dx) > 1 || Math.abs(input.dy) > 1) throw new AppError("Некорректное смещение");
+    const target = await database.prepare("SELECT author_id, kind, payload FROM annotations WHERE id = ? AND room_id = ? AND share_id = ? AND deleted = 0").bind(targetId, id, room.active_share_id).first<{ author_id: string; kind: string; payload: string }>();
+    if (!target) throw new AppError("Пометка не найдена", 404);
+    if (member.role !== "host" && target.author_id !== member.id) throw new AppError("Можно перемещать только свои пометки", 403);
+    const original = JSON.parse(target.payload) as AnnotationPayload;
+    const moved = translateAnnotation(original, input.dx, input.dy);
+    const payload = validateAnnotation(target.kind, moved.payload);
+    await database.prepare("UPDATE annotations SET payload = ? WHERE id = ? AND room_id = ? AND share_id = ? AND deleted = 0").bind(payload, targetId, id, room.active_share_id).run();
+    await broadcast(id, { type: "state-changed" });
+    return json({ id: targetId, payload });
   }
   if (input.action === "undo") {
     const last = await database.prepare("SELECT id FROM annotations WHERE room_id = ? AND share_id = ? AND author_id = ? AND deleted = 0 ORDER BY created_at DESC LIMIT 1").bind(id, room.active_share_id, member.id).first<{ id: string }>();

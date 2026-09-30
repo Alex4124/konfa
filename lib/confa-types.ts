@@ -1,6 +1,6 @@
 export type RoomKind = "meeting" | "webinar";
 export type Role = "host" | "speaker" | "viewer";
-export type Tool = "pen" | "line" | "arrow" | "dashed" | "marker" | "rect" | "circle" | "triangle" | "hexagon" | "text" | "eraser";
+export type Tool = "pen" | "line" | "arrow" | "dashed" | "marker" | "rect" | "circle" | "triangle" | "hexagon" | "text" | "eraser" | "move";
 export type Point = [number, number];
 export type AnnotationPayload = { color: string; points?: Point[]; point?: Point; text?: string; strokeWidth?: number };
 export type Annotation = { id: string; author_id: string; kind: Tool; payload: string; created_at: number };
