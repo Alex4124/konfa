@@ -267,11 +267,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
             controller.setFocusBehavior("no-focus-change");
           } catch { controller = undefined; }
         }
-        createdTracks = await room.localParticipant.createScreenTracks({ video: { displaySurface: "browser" }, selfBrowserSurface: "exclude", controller });
-        if (createdTracks[0]?.mediaStreamTrack.getSettings().displaySurface !== "browser") {
-          createdTracks.forEach((track) => track.stop());
-          throw new Error("Выберите вкладку браузера для демонстрации");
-        }
+        createdTracks = await room.localParticipant.createScreenTracks({ selfBrowserSurface: "exclude", controller });
         for (const track of createdTracks) await room.localParticipant.publishTrack(track);
       } else {
         await room.localParticipant.setScreenShareEnabled(true);
