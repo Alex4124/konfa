@@ -27,7 +27,7 @@ async function roomState(request: Request, id: string): Promise<Response> {
       : Promise.resolve(null),
   ]);
   return json({
-    room: { id, kind: room.kind, status: room.status, activeShareId: room.active_share_id, activeShareOwner: room.active_share_owner },
+    room: { id, kind: room.kind, status: room.status, activeShareId: room.active_share_id, activeShareOwner: room.active_share_owner, annotationsEnabled: Boolean(room.annotations_enabled) },
     members: members.results,
     messages: [...messages.results].reverse(),
     annotations: annotations.results,
@@ -173,8 +173,8 @@ async function joinRoom(request: Request, id: string): Promise<Response> {
     const role = isHost ? "host" : room.kind === "meeting" ? "speaker" : "viewer";
     const memberId = crypto.randomUUID();
     const now = Date.now();
-    await db().prepare("INSERT INTO members (id, room_id, name, role, can_annotate, raised_hand, removed, created_at) VALUES (?, ?, ?, ?, ?, 0, 0, ?)").bind(memberId, id, name, role, isHost ? 1 : 0, now).run();
-    member = { id: memberId, room_id: id, name, role, can_annotate: isHost ? 1 : 0, raised_hand: 0, removed: 0, created_at: now };
+    await db().prepare("INSERT INTO members (id, room_id, name, role, can_annotate, raised_hand, removed, created_at) VALUES (?, ?, ?, ?, 1, 0, 0, ?)").bind(memberId, id, name, role, now).run();
+    member = { id: memberId, room_id: id, name, role, can_annotate: 1, raised_hand: 0, removed: 0, created_at: now };
   }
   const origin = new URL(request.url).origin;
   return json({
@@ -246,10 +246,17 @@ function validateAnnotation(kind: string, payload: unknown): string {
 }
 
 async function updateAnnotations(request: Request, id: string, member: MemberRow): Promise<Response> {
-  if (member.role !== "host" && !member.can_annotate) throw new AppError("Ведущий не разрешил делать пометки", 403);
-  const room = await roomById(id);
-  if (!room.active_share_id) throw new AppError("Сейчас никто не показывает экран", 409);
   const input = await readJson(request);
+  if (input.action === "setAccess") {
+    requireHost(member);
+    if (typeof input.enabled !== "boolean") throw new AppError("Некорректное разрешение");
+    await db().prepare("UPDATE rooms SET annotations_enabled = ? WHERE id = ?").bind(input.enabled ? 1 : 0, id).run();
+    await broadcast(id, { type: "state-changed" });
+    return json({ annotationsEnabled: input.enabled });
+  }
+  const room = await roomById(id);
+  if (member.role !== "host" && (!room.annotations_enabled || !member.can_annotate)) throw new AppError("Ведущий запретил делать пометки", 403);
+  if (!room.active_share_id) throw new AppError("Сейчас никто не показывает экран", 409);
   const database = db();
   if (input.action === "add") {
     const kind = requiredString(input.kind, "тип пометки", 20);

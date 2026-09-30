@@ -4,9 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { LiveKitRoom } from "@livekit/components-react";
+import { BackgroundProcessor, supportsBackgroundProcessors } from "@livekit/track-processors";
+import { createLocalVideoTrack, type LocalVideoTrack } from "livekit-client";
 import { ArrowLeft, Camera, CameraOff, Mic, MicOff, Video, Users, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RoomView } from "@/components/room-view";
+import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
 import type { RoomKind, Role } from "@/lib/confa-types";
 
 type Joined = {
@@ -26,7 +29,17 @@ export default function RoomPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [isHostLink, setIsHostLink] = useState(false);
+  const [conferenceEnded, setConferenceEnded] = useState(false);
+  const [background, setBackground] = useState<VideoBackground | null>(null);
+  const backgroundUrls = useRef<string[]>([]);
   const previewRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => () => { backgroundUrls.current.forEach((url) => URL.revokeObjectURL(url)); }, []);
+
+  function changeBackground(next: VideoBackground | null) {
+    if (next) backgroundUrls.current.push(next.url);
+    setBackground(next);
+  }
 
   useEffect(() => {
     const loadBrowserState = () => {
@@ -43,14 +56,35 @@ export default function RoomPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!camera || !previewRef.current) return;
+    if (!camera || joined || !previewRef.current) return;
+    let cancelled = false;
     let stream: MediaStream | null = null;
-    navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then((next) => {
-      stream = next;
-      if (previewRef.current) previewRef.current.srcObject = next;
-    }).catch(() => { setCamera(false); setError("Нет доступа к камере"); });
-    return () => { stream?.getTracks().forEach((track) => track.stop()); };
-  }, [camera]);
+    let previewTrack: LocalVideoTrack | null = null;
+    const preview = previewRef.current;
+    const start = async () => {
+      try {
+        if (background) {
+          if (!supportsBackgroundProcessors()) throw new Error("Этот браузер не поддерживает замену фона");
+          previewTrack = await createLocalVideoTrack({ processor: BackgroundProcessor({ mode: "virtual-background", imagePath: background.url }) });
+          if (cancelled) { previewTrack.stop(); return; }
+          previewTrack.attach(preview);
+        } else {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          if (cancelled) { stream.getTracks().forEach((track) => track.stop()); return; }
+          preview.srcObject = stream;
+        }
+      } catch (cause) {
+        if (!cancelled) { setCamera(false); setError(cause instanceof Error ? cause.message : "Нет доступа к камере"); }
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+      if (previewTrack) { previewTrack.detach(); void previewTrack.stopProcessor().finally(() => previewTrack?.stop()); }
+      stream?.getTracks().forEach((track) => track.stop());
+      preview.srcObject = null;
+    };
+  }, [camera, background, joined]);
 
   async function join() {
     if (!name.trim()) { setError("Введите имя"); return; }
@@ -71,8 +105,10 @@ export default function RoomPage() {
     finally { setBusy(false); }
   }
 
-  if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} connect audio={joined.member.role !== "viewer" && microphone} video={joined.member.role !== "viewer" && camera} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
-    <RoomView id={id} joined={joined} onLeave={() => { setJoined(null); router.push("/"); }} connectionError={error} />
+  if (conferenceEnded) return <main className="grid min-h-screen place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => router.push("/")}>На главную</Button></div></main>;
+
+  if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
+    <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); router.push("/"); }} onEnded={() => { setJoined(null); setConferenceEnded(true); }} connectionError={error} />
   </LiveKitRoom>;
 
   return <main className="prejoin min-h-screen bg-[#0e192c] text-white">
@@ -92,6 +128,7 @@ export default function RoomPage() {
         <p className="mt-4 max-w-md text-base leading-relaxed text-slate-300">{isHostLink ? "Вы войдёте как ведущий. Ссылку для гостей можно будет скопировать внутри комнаты." : room?.kind === "webinar" ? "Вы войдёте как зритель. Ведущий сможет пригласить вас выступить." : "Проверьте имя, камеру и микрофон перед входом."}</p>
         <label className="mt-8 block text-sm font-medium text-slate-200" htmlFor="display-name">Ваше имя</label>
         <input id="display-name" autoComplete="name" maxLength={60} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void join(); }} placeholder="Как к вам обращаться" className="mt-2 h-13 w-full max-w-md rounded-xl border border-[#435872] bg-[#1b2c46] px-4 text-base text-white outline-none placeholder:text-slate-400 focus:border-[#6de7d4]" />
+        <div className="mt-5"><BackgroundPicker background={background} onChange={changeBackground} onError={setError} /></div>
         <div className="mt-6"><Button className="h-13 rounded-xl bg-[#6de7d4] px-7 text-base font-semibold text-[#10243a] hover:bg-[#96f5e7]" disabled={busy || !room || room.status !== "open"} onClick={() => void join()}>{busy ? "Подключаем…" : "Войти"}</Button></div>
         {error && <p role="alert" className="mt-4 max-w-md text-sm text-rose-300">{error}</p>}
         {room?.status === "ended" && <p className="mt-4 text-rose-300">Эта комната уже завершена</p>}

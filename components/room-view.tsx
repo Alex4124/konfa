@@ -1,22 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
-import { RoomEvent, Track } from "livekit-client";
-import { Copy, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, Radio, Users, Video, VideoOff, X } from "lucide-react";
+import { BackgroundProcessor, supportsBackgroundProcessors, type BackgroundProcessorWrapper } from "@livekit/track-processors";
+import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication } from "livekit-client";
+import { Copy, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PanelsTopLeft, PhoneOff, Radio, Users, Video, VideoOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnnotationLayer } from "@/components/annotation-layer";
 import { SharedScreen } from "@/components/shared-screen";
+import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
 import type { AnnotationPayload, Role, RoomKind, RoomState, Tool } from "@/lib/confa-types";
 
 type Joined = {
   member: { id: string; name: string; role: Role; canAnnotate: boolean };
   sessionToken: string; livekitToken: string; livekitUrl: string; guestUrl: string; kind: RoomKind;
 };
-type Props = { id: string; joined: Joined; onLeave: () => void; connectionError: string };
+type Props = { id: string; joined: Joined; initialCamera: boolean; background: VideoBackground | null; onBackgroundChange: (background: VideoBackground | null) => void; onLeave: () => void; onEnded: () => void; connectionError: string };
 
-export function RoomView({ id, joined, onLeave, connectionError }: Props) {
+type PictureInPictureApi = { requestWindow: (options: { width: number; height: number }) => Promise<Window> };
+type FocusController = { setFocusBehavior: (behavior: "focus-captured-surface") => void };
+
+export function RoomView({ id, joined, initialCamera, background, onBackgroundChange, onLeave, onEnded, connectionError }: Props) {
   const room = useRoomContext();
   const participants = useParticipants();
   const cameras = useTracks([Track.Source.Camera]);
@@ -26,18 +32,36 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
   const [panel, setPanel] = useState<"chat" | "people" | null>("chat");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
-  const [drafts, setDrafts] = useState<Array<{ id: string; kind: Tool; payload: AnnotationPayload }>>([]);
+  const [drafts, setDrafts] = useState<Array<{ id: string; shareId: string; kind: Tool; payload: AnnotationPayload }>>([]);
   const [mic, setMic] = useState(room.localParticipant.isMicrophoneEnabled);
   const [cam, setCam] = useState(room.localParticipant.isCameraEnabled);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [pipRoot, setPipRoot] = useState<HTMLElement | null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
+  const pipWindow = useRef<Window | null>(null);
+  const stoppingShare = useRef(false);
+  const endedRef = useRef(false);
+  const cameraStarting = useRef(false);
+  const cameraProcessor = useRef<BackgroundProcessorWrapper | null>(null);
+  const appliedBackgroundUrl = useRef<string | null>(null);
+  const backgroundQueue = useRef<Promise<void>>(Promise.resolve());
+  const backgroundRef = useRef(background);
+  const previousBackground = useRef(background);
+  useEffect(() => { backgroundRef.current = background; }, [background]);
   const activeIds = useMemo(() => new Set(participants.map((person) => person.identity)), [participants]);
   const self = state?.members.find((item) => item.id === joined.member.id);
   const role = self?.role || joined.member.role;
-  const canDraw = role === "host" || Boolean(self?.can_annotate);
+  const canDraw = role === "host" || (Boolean(state?.room.annotationsEnabled) && Boolean(self?.can_annotate));
   const canPublish = role !== "viewer";
   const activeScreen = screens.find((track) => track.participant.identity === state?.room.activeShareOwner) || screens[0];
   const isSharing = Boolean(activeScreen?.participant.identity === joined.member.id);
+  const pipSupported = typeof window !== "undefined" && "documentPictureInPicture" in window;
   const visibleMembers = state?.members.filter((person) => activeIds.has(person.id)) || [];
+  const visibleDrafts = drafts.filter((item) => {
+    if (item.shareId !== state?.room.activeShareId) return false;
+    const author = state?.members.find((member) => member.id === item.id);
+    return author?.role === "host" || (Boolean(state?.room.annotationsEnabled) && Boolean(author?.can_annotate));
+  });
 
   const api = useCallback(async (path: string, body?: Record<string, unknown>) => {
     const response = await fetch(`/api/rooms/${id}/${path}`, {
@@ -54,9 +78,14 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
     try {
       const next = await api("state") as unknown as RoomState;
       setState(next);
-      if (next.room.status !== "open") setError("Ведущий завершил комнату");
+      if (next.room.status !== "open" && !endedRef.current) {
+        endedRef.current = true;
+        pipWindow.current?.close();
+        room.disconnect();
+        onEnded();
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось обновить комнату"); }
-  }, [api]);
+  }, [api, room, onEnded]);
 
   useEffect(() => {
     const initial = window.setTimeout(() => void refresh(), 0);
@@ -71,10 +100,10 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
         if (topic === "confa" && data.type === "state-changed") void refresh();
         if (topic === "confa-annotation-draft" && participant && data.shareId === state?.room.activeShareId) {
           const source = state?.members.find((member) => member.id === participant.identity);
-          if (!source || (source.role !== "host" && !source.can_annotate)) return;
+          if (!source || (source.role !== "host" && (!state?.room.annotationsEnabled || !source.can_annotate))) return;
           setDrafts((current) => {
             const rest = current.filter((item) => item.id !== participant.identity);
-            return data.payload && Array.isArray(data.payload.points) ? [...rest, { id: participant.identity, kind: data.kind, payload: data.payload }] : rest;
+            return data.payload && Array.isArray(data.payload.points) ? [...rest, { id: participant.identity, shareId: data.shareId, kind: data.kind, payload: data.payload }] : rest;
           });
         }
       } catch { /* Ignore malformed data */ }
@@ -85,7 +114,11 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
 
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [state?.messages.length]);
   useEffect(() => {
-    const sync = () => { setMic(room.localParticipant.isMicrophoneEnabled); setCam(room.localParticipant.isCameraEnabled); };
+    const sync = () => {
+      setMic(room.localParticipant.isMicrophoneEnabled);
+      setCam(room.localParticipant.isCameraEnabled);
+      if (!room.localParticipant.isCameraEnabled) { cameraProcessor.current = null; appliedBackgroundUrl.current = null; }
+    };
     room.on(RoomEvent.LocalTrackPublished, sync); room.on(RoomEvent.LocalTrackUnpublished, sync);
     return () => { room.off(RoomEvent.LocalTrackPublished, sync); room.off(RoomEvent.LocalTrackUnpublished, sync); };
   }, [room]);
@@ -101,25 +134,177 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
     try { await room.localParticipant.setMicrophoneEnabled(!mic); setMic(!mic); }
     catch { setError("Нет доступа к микрофону"); }
   }
+  const applyCurrentBackground = useCallback(() => {
+    backgroundQueue.current = backgroundQueue.current.catch(() => {}).then(async () => {
+      const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+      if (!(track instanceof LocalVideoTrack)) return;
+      const selected = backgroundRef.current;
+      if (selected?.url === appliedBackgroundUrl.current) return;
+      try {
+        if (selected) {
+          if (!supportsBackgroundProcessors()) throw new Error("Этот браузер не поддерживает замену фона");
+          if (cameraProcessor.current) await cameraProcessor.current.switchTo({ mode: "virtual-background", imagePath: selected.url });
+          else {
+            const processor = BackgroundProcessor({ mode: "virtual-background", imagePath: selected.url });
+            await track.setProcessor(processor);
+            cameraProcessor.current = processor;
+          }
+          appliedBackgroundUrl.current = selected.url;
+        } else if (cameraProcessor.current) {
+          await track.stopProcessor();
+          cameraProcessor.current = null;
+          appliedBackgroundUrl.current = null;
+        }
+      } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось применить фон"); }
+    });
+    return backgroundQueue.current;
+  }, [room]);
+
+  const startCamera = useCallback(async () => {
+    if (cameraStarting.current || room.localParticipant.isCameraEnabled) return;
+    cameraStarting.current = true;
+    setCameraBusy(true);
+    let processor: BackgroundProcessorWrapper | null = null;
+    try {
+      const selected = backgroundRef.current;
+      if (selected) {
+        if (!supportsBackgroundProcessors()) throw new Error("Этот браузер не поддерживает замену фона");
+        processor = BackgroundProcessor({ mode: "virtual-background", imagePath: selected.url });
+      }
+      await room.localParticipant.setCameraEnabled(true, processor ? { processor } : undefined);
+      cameraProcessor.current = processor;
+      appliedBackgroundUrl.current = selected?.url || null;
+      setCam(true);
+      if (backgroundRef.current?.url !== selected?.url) await applyCurrentBackground();
+    } catch (cause) {
+      if (processor) void processor.destroy();
+      setError(cause instanceof Error ? cause.message : "Нет доступа к камере");
+    } finally {
+      cameraStarting.current = false;
+      setCameraBusy(false);
+    }
+  }, [room, applyCurrentBackground]);
+
+  useEffect(() => {
+    if (!initialCamera || !canPublish) return;
+    const connected = () => { void startCamera(); };
+    if (room.state === ConnectionState.Connected) connected();
+    else room.on(RoomEvent.Connected, connected);
+    return () => { room.off(RoomEvent.Connected, connected); };
+  }, [room, initialCamera, canPublish, startCamera]);
+
+  useEffect(() => {
+    if (previousBackground.current?.url === background?.url) return;
+    previousBackground.current = background;
+    void applyCurrentBackground();
+  }, [background, applyCurrentBackground]);
+
   async function toggleCam() {
-    try { await room.localParticipant.setCameraEnabled(!cam); setCam(!cam); }
-    catch { setError("Нет доступа к камере"); }
+    if (!cam) { await startCamera(); return; }
+    setCameraBusy(true);
+    try {
+      await room.localParticipant.setCameraEnabled(false);
+      cameraProcessor.current = null;
+      appliedBackgroundUrl.current = null;
+      setCam(false);
+    } catch { setError("Не удалось выключить камеру"); }
+    finally { setCameraBusy(false); }
   }
-  async function toggleShare() {
+
+  const stopShare = useCallback(async () => {
+    if (stoppingShare.current) return;
+    stoppingShare.current = true;
     setBusy("share");
     try {
-      if (isSharing) {
-        await room.localParticipant.setScreenShareEnabled(false);
-        await api("share", { action: "stop" });
+      await room.localParticipant.setScreenShareEnabled(false);
+      if (!endedRef.current) await api("share", { action: "stop" });
+      if (!endedRef.current) await refresh();
+    } catch (cause) { if (!endedRef.current) setError(cause instanceof Error ? cause.message : "Не удалось остановить демонстрацию"); }
+    finally {
+      pipWindow.current?.close();
+      stoppingShare.current = false;
+      setBusy("");
+    }
+  }, [room, api, refresh]);
+
+  async function openPresenterWindow() {
+    if (pipWindow.current) return;
+    const pip = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture;
+    if (!pip) { setError("Плавающее окно поддерживается в настольных Chrome и Edge"); return; }
+    try {
+      const popup = await pip.requestWindow({ width: 490, height: 640 });
+      popup.document.title = "Конфа · окно ведущего";
+      document.querySelectorAll('link[rel="stylesheet"], style').forEach((style) => popup.document.head.appendChild(style.cloneNode(true)));
+      popup.document.body.style.margin = "0";
+      popup.document.body.style.background = "#0e192c";
+      const root = popup.document.createElement("div");
+      root.style.height = "100vh";
+      popup.document.body.appendChild(root);
+      popup.addEventListener("pagehide", () => {
+        if (pipWindow.current !== popup) return;
+        pipWindow.current = null;
+        setPipRoot(null);
+        if (room.localParticipant.getTrackPublication(Track.Source.ScreenShare) && !endedRef.current && !stoppingShare.current) void stopShare();
+      });
+      pipWindow.current = popup;
+      setPipRoot(root);
+      setError("");
+    } catch { setError("Не удалось открыть окно ведущего"); }
+  }
+
+  async function toggleShare() {
+    if (isSharing) { await stopShare(); return; }
+    if (role === "host" && pipSupported && !pipWindow.current) {
+      setError("Сначала откройте окно ведущего, затем выберите вкладку для показа");
+      return;
+    }
+    if (state?.room.activeShareOwner && state.room.activeShareOwner !== joined.member.id) {
+      setError("Другой участник уже показывает экран");
+      return;
+    }
+    setBusy("share"); setError("");
+    let createdTracks: Awaited<ReturnType<typeof room.localParticipant.createScreenTracks>> = [];
+    try {
+      if (role === "host" && pipWindow.current) {
+        const Controller = (window as Window & { CaptureController?: new () => FocusController }).CaptureController;
+        const controller = Controller && "setFocusBehavior" in Controller.prototype ? new Controller() : undefined;
+        controller?.setFocusBehavior("focus-captured-surface");
+        createdTracks = await room.localParticipant.createScreenTracks({ video: { displaySurface: "browser" }, selfBrowserSurface: "exclude", controller });
+        if (!pipWindow.current) {
+          createdTracks.forEach((track) => track.stop());
+          throw new Error("Окно ведущего закрыто. Откройте его перед повторной демонстрацией");
+        }
+        if (createdTracks[0]?.mediaStreamTrack.getSettings().displaySurface !== "browser") {
+          createdTracks.forEach((track) => track.stop());
+          throw new Error("Выберите вкладку браузера, чтобы окно ведущего не попало в трансляцию");
+        }
+        for (const track of createdTracks) await room.localParticipant.publishTrack(track);
       } else {
         await room.localParticipant.setScreenShareEnabled(true);
-        try { await api("share", { action: "start" }); }
-        catch (error) { await room.localParticipant.setScreenShareEnabled(false); throw error; }
+      }
+      await api("share", { action: "start" });
+      if (role === "host" && pipSupported && !pipWindow.current) {
+        await room.localParticipant.setScreenShareEnabled(false);
+        await api("share", { action: "stop" });
+        throw new Error("Окно ведущего закрыто. Демонстрация остановлена");
       }
       await refresh();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось показать экран"); }
-    finally { setBusy(""); }
+    } catch (cause) {
+      await room.localParticipant.setScreenShareEnabled(false).catch(() => {});
+      createdTracks.forEach((track) => track.stop());
+      setError(cause instanceof Error ? cause.message : "Не удалось показать экран");
+    } finally { setBusy(""); }
   }
+
+  useEffect(() => {
+    const unpublished = (publication: LocalTrackPublication) => {
+      if (publication.source === Track.Source.ScreenShare && !stoppingShare.current && !endedRef.current) void stopShare();
+    };
+    room.on(RoomEvent.LocalTrackUnpublished, unpublished);
+    return () => { room.off(RoomEvent.LocalTrackUnpublished, unpublished); };
+  }, [room, stopShare]);
+
+  useEffect(() => () => { pipWindow.current?.close(); }, []);
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     const body = message.trim();
@@ -143,16 +328,35 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
     catch { setError("Не удалось скопировать ссылку"); }
   }
 
+  async function endConference() {
+    if (!window.confirm("Закончить конференцию для всех участников?")) return;
+    setBusy("end"); setError("");
+    try {
+      await api("end", {});
+      endedRef.current = true;
+      pipWindow.current?.close();
+      room.disconnect();
+      onEnded();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось закончить конференцию"); }
+    finally { setBusy(""); }
+  }
+
   const recordingStatus = state?.recording?.status;
+  const pipPeople = visibleMembers.filter((person) => person.id !== joined.member.id).sort((a, b) => {
+    const aSpeaking = participants.find((person) => person.identity === a.id)?.isSpeaking ? 1 : 0;
+    const bSpeaking = participants.find((person) => person.identity === b.id)?.isSpeaking ? 1 : 0;
+    return bSpeaking - aSpeaking;
+  }).slice(0, 4);
 
   return <main className="flex h-dvh min-h-[540px] flex-col overflow-hidden bg-[#0e192c] text-white">
     <RoomAudioRenderer />
-    <header className="flex min-h-16 items-center justify-between gap-3 border-b border-white/10 px-4 sm:px-6">
+    <header className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-2 sm:px-6">
       <div className="flex min-w-0 items-center gap-3"><span className="brand-mark !h-9 !w-9 !rounded-xl"><Video size={19} /></span><div className="min-w-0"><h1 className="truncate text-base font-semibold">{joined.kind === "webinar" ? "Вебинар" : "Встреча"}</h1><p className="text-xs text-slate-400">{visibleMembers.length} из 50 участников</p></div></div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {recordingStatus === "recording" && <span className="flex items-center gap-2 rounded-full bg-rose-500/15 px-3 py-1.5 text-xs font-medium text-rose-200"><span className="h-2 w-2 animate-pulse rounded-full bg-rose-400" /> Идёт запись</span>}
         {recordingStatus === "processing" && <span className="rounded-full bg-amber-400/15 px-3 py-1.5 text-xs text-amber-200">Готовим запись</span>}
         <Button variant="outline" size="sm" className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => void copyGuestLink()}><Copy size={15} /><span className="hidden sm:inline">Ссылка для гостей</span></Button>
+        {role === "host" && <Button variant="destructive" size="sm" disabled={busy === "end"} className="rounded-xl" onClick={() => void endConference()}><PhoneOff size={16} />Закончить конференцию</Button>}
       </div>
     </header>
 
@@ -163,7 +367,7 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           {activeScreen ? <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#16253b]">
             <SharedScreen trackRef={activeScreen}>
-              {state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} annotations={state.annotations} canDraw={canDraw} canClear={role === "host"} onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={drafts} />}
+              {state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} annotations={state.annotations} canDraw={canDraw && !(role === "host" && isSharing && Boolean(pipRoot))} canClear={role === "host"} onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} />}
             </SharedScreen>
             <span className="absolute left-4 top-4 rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white">{activeScreen.participant.name || "Демонстрация экрана"}</span>
           </div> : <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 bg-[#16253b]/65 px-5 text-center"><MonitorUp size={42} className="mb-4 text-[#6de7d4]" /><h2 className="text-xl font-semibold">Комната готова</h2><p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-400">Включите камеру или покажите экран, чтобы начать совместную работу.</p></div>}
@@ -187,12 +391,13 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
             <form onSubmit={(event) => void sendMessage(event)} className="flex gap-2 border-t border-white/10 p-3"><input aria-label="Сообщение" maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Написать сообщение…" className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-[#213650] px-3 text-sm outline-none focus:border-[#6de7d4]" /><Button type="submit" disabled={!message.trim() || busy === "message"} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]">Отправить</Button></form>
           </TabsContent>
           <TabsContent value="people" className="min-h-0 flex-1 overflow-y-auto p-3">
+            {role === "host" && state && <Button variant="secondary" size="sm" disabled={busy === "annotationAccess"} className="mb-3 w-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void action("annotations", { action: "setAccess", enabled: !state.room.annotationsEnabled }, "annotationAccess")}>Пометки: {state.room.annotationsEnabled ? "все" : "только ведущий"}</Button>}
             <p className="px-2 pb-2 text-xs uppercase tracking-[.12em] text-slate-400">В комнате · {visibleMembers.length}</p>
             {visibleMembers.map((person) => <div key={person.id} className="mb-2 rounded-xl bg-[#20344e] p-3">
               <div className="flex items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#6de7d4]/20 text-sm font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{person.name}{person.id === joined.member.id ? " (вы)" : ""}</p><p className="text-xs text-slate-400">{person.role === "host" ? "Ведущий" : person.role === "speaker" ? "Выступающий" : "Зритель"}{person.raised_hand ? " · поднял руку" : ""}</p></div></div>
               {role === "host" && person.id !== joined.member.id && <div className="mt-3 flex flex-wrap gap-1.5">
                 {joined.kind === "webinar" && <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "role", role: person.role === "viewer" ? "speaker" : "viewer" })}>{person.role === "viewer" ? "На сцену" : "В зрители"}</Button>}
-                <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "annotation", enabled: !person.can_annotate })}>{person.can_annotate ? "Запретить пометки" : "Разрешить пометки"}</Button>
+                <Button size="xs" variant="secondary" disabled={!state?.room.annotationsEnabled} onClick={() => void action(`members/${person.id}`, { action: "annotation", enabled: !person.can_annotate })}>{person.can_annotate ? "Запретить пометки" : "Разрешить пометки"}</Button>
                 <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "mute" })}>Выключить звук</Button>
                 <Button size="xs" variant="destructive" onClick={() => { if (confirm(`Удалить участника ${person.name}?`)) void action(`members/${person.id}`, { action: "remove" }); }}>Удалить</Button>
               </div>}
@@ -204,10 +409,12 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
 
     <footer className="flex min-h-[72px] items-center justify-between gap-2 border-t border-white/10 bg-[#15243a] px-3 sm:px-6">
       <div className="hidden min-w-0 sm:block"><p className="truncate text-sm font-medium">{joined.member.name}</p><p className="text-xs text-slate-400">{role === "host" ? "Ведущий" : role === "speaker" ? "Выступающий" : "Зритель"}</p></div>
-      <div className="flex flex-1 items-center justify-center gap-1.5 sm:gap-2">
+      <div className="flex min-w-0 flex-1 items-center justify-start gap-1.5 overflow-x-auto sm:justify-center sm:gap-2">
         {canPublish && <>
           <Button variant="secondary" size="icon-lg" title={mic ? "Выключить микрофон" : "Включить микрофон"} aria-label={mic ? "Выключить микрофон" : "Включить микрофон"} className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void toggleMic()}>{mic ? <Mic /> : <MicOff />}</Button>
-          <Button variant="secondary" size="icon-lg" title={cam ? "Выключить камеру" : "Включить камеру"} aria-label={cam ? "Выключить камеру" : "Включить камеру"} className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void toggleCam()}>{cam ? <Video /> : <VideoOff />}</Button>
+          <Button variant="secondary" size="icon-lg" title={cam ? "Выключить камеру" : "Включить камеру"} aria-label={cam ? "Выключить камеру" : "Включить камеру"} disabled={cameraBusy} className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void toggleCam()}>{cam ? <Video /> : <VideoOff />}</Button>
+          <BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} compact />
+          {role === "host" && pipSupported && <Button variant="secondary" size="sm" title={pipRoot ? "Окно ведущего открыто" : "Открыть окно ведущего"} aria-label={pipRoot ? "Окно ведущего открыто" : "Открыть окно ведущего"} disabled={Boolean(pipRoot)} className="rounded-xl bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void openPresenterWindow()}><PanelsTopLeft />Окно ведущего</Button>}
           <Button variant="secondary" size="icon-lg" title={isSharing ? "Остановить демонстрацию" : "Показать экран"} aria-label={isSharing ? "Остановить демонстрацию" : "Показать экран"} disabled={busy === "share"} className={`rounded-full text-white hover:bg-[#3e5673] ${isSharing ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => void toggleShare()}>{isSharing ? <MonitorX /> : <MonitorUp />}</Button>
         </>}
         <Button variant="secondary" size="icon-lg" title="Поднять или опустить руку" aria-label="Поднять или опустить руку" className={`rounded-full text-white hover:bg-[#3e5673] ${self?.raised_hand ? "bg-amber-500/40" : "bg-[#2d415d]"}`} onClick={() => void action("hand", {})}><Hand /></Button>
@@ -217,8 +424,24 @@ export function RoomView({ id, joined, onLeave, connectionError }: Props) {
       </div>
       <div className="flex items-center gap-2">
         {state?.recording?.url && <a href={state.recording.url} target="_blank" rel="noreferrer" className="hidden text-xs text-[#9af4e7] underline sm:inline">Открыть запись</a>}
-        <Button variant="destructive" size="sm" className="rounded-xl" onClick={() => { if (role === "host") { if (confirm("Завершить комнату для всех?")) void action("end", {}).then((result) => { if (result) onLeave(); }); } else { room.disconnect(); onLeave(); } }}><PhoneOff size={16} /><span className="hidden sm:inline">{role === "host" ? "Завершить" : "Выйти"}</span></Button>
+        {role !== "host" && <Button variant="destructive" size="sm" className="rounded-xl" onClick={() => { room.disconnect(); onLeave(); }}><PhoneOff size={16} /><span className="hidden sm:inline">Выйти</span></Button>}
       </div>
     </footer>
+    {pipRoot && createPortal(<div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-[#0e192c] p-3 text-white">
+      <div className="flex items-center justify-between gap-2"><strong className="text-sm">Окно ведущего</strong><div className="flex items-center gap-1">{isSharing && <Button variant="secondary" size="xs" onClick={() => void stopShare()}>Остановить показ</Button>}<Button variant="destructive" size="xs" disabled={busy === "end"} onClick={() => void endConference()}>Закончить</Button></div></div>
+      {isSharing && activeScreen ? <div className="relative min-h-[190px] flex-[2] overflow-hidden rounded-xl bg-[#16253b]">
+        <SharedScreen trackRef={activeScreen}>
+          {state?.room.activeShareId && <AnnotationLayer key={`pip-${state.room.activeShareId}`} annotations={state.annotations} canDraw canClear onAdd={addAnnotation} onAction={annotationAction} onDraft={sendDraft} drafts={visibleDrafts} />}
+        </SharedScreen>
+      </div> : <div className="grid min-h-[130px] flex-1 place-items-center rounded-xl border border-dashed border-white/20 px-6 text-center text-sm text-slate-300">Вернитесь на вкладку Конфы и нажмите «Показать экран», затем выберите вкладку браузера.</div>}
+      {state && <Button variant="secondary" size="sm" disabled={busy === "annotationAccess"} className="w-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void action("annotations", { action: "setAccess", enabled: !state.room.annotationsEnabled }, "annotationAccess")}>Пометки: {state.room.annotationsEnabled ? "все" : "только ведущий"}</Button>}
+      <div className="grid grid-cols-4 gap-1.5">
+        {pipPeople.length ? pipPeople.map((person) => {
+          const video = cameras.find((track) => track.participant.identity === person.id);
+          return <div key={person.id} className="relative aspect-video min-w-0 overflow-hidden rounded-lg bg-[#213650]">{video ? <VideoTrack trackRef={video} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</div>}<span className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1 text-[10px]">{person.name}</span></div>;
+        }) : <p className="col-span-4 py-3 text-center text-xs text-slate-400">Других участников пока нет</p>}
+      </div>
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-[#17263e]"><h2 className="border-b border-white/10 px-3 py-2 text-xs font-semibold">Чат</h2><div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-2">{state?.messages.slice(-8).map((item) => <p key={item.id} className="break-words text-xs"><strong className="text-[#9af4e7]">{item.name}: </strong>{item.body}</p>)}</div><form onSubmit={(event) => void sendMessage(event)} className="flex gap-1.5 border-t border-white/10 p-2"><input aria-label="Сообщение в чате ведущего" maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Сообщение…" className="min-w-0 flex-1 rounded-md border border-white/15 bg-[#213650] px-2 text-xs outline-none" /><Button type="submit" size="xs" disabled={!message.trim() || busy === "message"}>Отправить</Button></form></section>
+    </div>, pipRoot)}
   </main>;
 }

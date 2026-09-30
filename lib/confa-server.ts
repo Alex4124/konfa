@@ -6,6 +6,7 @@ export type Role = "host" | "speaker" | "viewer";
 export type RoomRow = {
   id: string; kind: RoomKind; host_secret_hash: string; status: string;
   active_share_id: string | null; active_share_owner: string | null;
+  annotations_enabled: number;
   recording_id: string | null; created_at: number; ended_at: number | null;
 };
 export type MemberRow = {
@@ -154,7 +155,7 @@ export function grants(roomId: string, member: Pick<MemberRow, "role" | "can_ann
   return {
     room: roomId, roomJoin: true, canSubscribe: true,
     canPublish: presenter, canPublishSources: presenter ? ["camera", "microphone", "screen_share", "screen_share_audio"] : [],
-    canPublishData: member.role === "host" || Boolean(member.can_annotate),
+    canPublishData: true,
   };
 }
 

@@ -17,6 +17,7 @@
     "@base-ui/react": "^1.7.0",
     "@hookform/resolvers": "^5.7.1",
     "@livekit/components-react": "^2.9.24",
+    "@livekit/track-processors": "0.8.1",
     "@shadcn/react": "^0.3.0",
     "aws4fetch": "^1.0.20",
     "class-variance-authority": "0.7.1",
