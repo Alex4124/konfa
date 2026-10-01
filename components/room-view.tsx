@@ -31,6 +31,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [expandedShareId, setExpandedShareId] = useState<string | null>(null);
   const [overlayView, setOverlayView] = useState<"tiles" | "list">("tiles");
   const [overlayCollapsed, setOverlayCollapsed] = useState(false);
+  const [overlayNavigation, setOverlayNavigation] = useState({ overflow: false, canPrevious: false, canNext: false });
   const [participantsOnTop, setParticipantsOnTop] = useState(true);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
@@ -40,6 +41,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [cameraBusy, setCameraBusy] = useState(false);
   const [toolbarContainer, setToolbarContainer] = useState<HTMLDivElement | null>(null);
   const presentationRef = useRef<HTMLDivElement>(null);
+  const overlayNavigationRef = useRef<HTMLDivElement>(null);
+  const overlayTilesRef = useRef<HTMLDivElement>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   const stoppingShare = useRef(false);
   const endedRef = useRef(false);
@@ -62,6 +65,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const expanded = Boolean(activeScreen && state?.room.activeShareId === expandedShareId);
   const isSharing = screens.some((track) => track.participant.identity === joined.member.id);
   const visibleMembers = state?.members.filter((person) => activeIds.has(person.id)) || [];
+  const overlayMemberIds = visibleMembers.map((person) => person.id).join("\u0000");
   const visibleDrafts = drafts.filter((item) => {
     if (item.shareId !== state?.room.activeShareId) return false;
     const author = state?.members.find((member) => member.id === item.id);
@@ -106,6 +110,36 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     observer.observe(element);
     return () => observer.disconnect();
   }, [hasActiveScreen, expanded]);
+
+  const updateOverlayNavigation = useCallback(() => {
+    const viewport = overlayTilesRef.current;
+    if (!viewport) return;
+    const position = participantsOnTop ? viewport.scrollLeft : viewport.scrollTop;
+    const end = participantsOnTop ? viewport.scrollWidth - viewport.clientWidth : viewport.scrollHeight - viewport.clientHeight;
+    const navigationHeight = participantsOnTop ? 0 : (overlayNavigationRef.current?.offsetHeight ?? 0);
+    const overflow = end > navigationHeight + 1;
+    const next = { overflow, canPrevious: overflow && position > 1, canNext: overflow && position < end - 1 };
+    setOverlayNavigation((current) => current.overflow === next.overflow && current.canPrevious === next.canPrevious && current.canNext === next.canNext ? current : next);
+  }, [participantsOnTop]);
+
+  useEffect(() => {
+    const viewport = overlayTilesRef.current;
+    if (!expanded || overlayCollapsed || overlayView !== "tiles" || !viewport) return;
+    viewport.scrollLeft = 0;
+    viewport.scrollTop = 0;
+    let frame = 0;
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(updateOverlayNavigation);
+    };
+    const observer = new ResizeObserver(scheduleUpdate);
+    observer.observe(viewport);
+    scheduleUpdate();
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
+  }, [expanded, overlayCollapsed, overlayView, participantsOnTop, overlayMemberIds, updateOverlayNavigation]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -359,6 +393,35 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     setExpandedShareId(state.room.activeShareId);
   }
 
+  function pageOverlay(direction: -1 | 1) {
+    const viewport = overlayTilesRef.current;
+    if (!viewport) return;
+    const tiles = Array.from(viewport.children) as HTMLElement[];
+    if (tiles.length < 2) return;
+    const horizontal = participantsOnTop;
+    const first = tiles[0];
+    const step = horizontal ? tiles[1].offsetLeft - first.offsetLeft : tiles[1].offsetTop - first.offsetTop;
+    if (step <= 0) return;
+    const style = window.getComputedStyle(viewport);
+    const padding = horizontal
+      ? parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+      : parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    const tileSize = horizontal ? first.offsetWidth : first.offsetHeight;
+    const viewportSize = (horizontal ? viewport.clientWidth : viewport.clientHeight) - padding;
+    const pageSize = Math.max(1, Math.floor((viewportSize + step - tileSize + 0.5) / step));
+    const lastStart = Math.max(0, tiles.length - pageSize);
+    const pageStarts = Array.from({ length: Math.ceil(tiles.length / pageSize) }, (_, page) => Math.min(page * pageSize, lastStart))
+      .filter((start, index, starts) => index === 0 || start !== starts[index - 1]);
+    const maxScroll = horizontal ? viewport.scrollWidth - viewport.clientWidth : viewport.scrollHeight - viewport.clientHeight;
+    const offset = (index: number) => Math.min(maxScroll, horizontal ? tiles[index].offsetLeft - first.offsetLeft : tiles[index].offsetTop - first.offsetTop);
+    const position = horizontal ? viewport.scrollLeft : viewport.scrollTop;
+    const currentPage = pageStarts.reduce((nearest, start, index) => Math.abs(offset(start) - position) < Math.abs(offset(pageStarts[nearest]) - position) ? index : nearest, 0);
+    const targetPage = Math.max(0, Math.min(pageStarts.length - 1, currentPage + direction));
+    const target = offset(pageStarts[targetPage]);
+    viewport.scrollTo(horizontal ? { left: target, behavior: "auto" } : { top: target, behavior: "auto" });
+    updateOverlayNavigation();
+  }
+
   const recordingStatus = state?.recording?.status;
 
   return <main className={`relative flex h-dvh flex-col overflow-hidden bg-[#0e192c] text-white ${expanded ? "min-h-0" : "min-h-[540px]"}`}>
@@ -399,8 +462,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
           <Button variant="secondary" size="icon-lg" title={expanded ? "Свернуть экран" : "Развернуть экран"} aria-label={expanded ? "Свернуть экран" : "Развернуть экран"} className="absolute right-3 top-3 z-40 bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a]" onClick={() => expanded ? setExpandedShareId(null) : expandScreen()}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
 
           {expanded && <div className={`absolute z-30 flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/15 bg-[#14243a]/90 shadow-2xl backdrop-blur-md ${participantsOnTop
-            ? overlayCollapsed ? "left-3 top-3" : overlayView === "tiles" ? "left-3 right-16 top-3 max-h-[min(50vh,440px)]" : "left-3 top-3 max-h-[min(50vh,440px)] w-[min(360px,75vw)]"
-            : overlayCollapsed ? "left-3 top-3" : overlayView === "tiles" ? "bottom-3 left-3 top-3 w-[clamp(110px,16vw,180px)]" : "bottom-3 left-3 top-3 w-[min(340px,75vw)]"}`}>
+            ? overlayCollapsed ? "left-3 top-3" : overlayView === "tiles" ? "left-3 top-3 w-fit max-w-[calc(100%-76px)] max-h-[min(50vh,440px)]" : "left-3 top-3 max-h-[min(50vh,440px)] w-[min(360px,75vw)]"
+            : overlayCollapsed ? "left-3 top-3" : overlayView === "tiles" ? "left-3 top-3 h-fit max-h-[calc(100%-24px)] w-[clamp(110px,16vw,180px)]" : "bottom-3 left-3 top-3 w-[min(340px,75vw)]"}`}>
             <div className="flex shrink-0 items-center justify-between gap-1 p-1.5">
               {overlayCollapsed ? <Button variant="ghost" size="sm" aria-label="Развернуть панель участников" aria-expanded={false} className="text-white hover:bg-white/10 hover:text-white" onClick={() => setOverlayCollapsed(false)}><Users size={16} />{visibleMembers.length}{participantsOnTop ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</Button> : <>
                 <span className="min-w-0 truncate px-1 text-xs text-slate-200">{visibleMembers.length}</span>
@@ -412,11 +475,17 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
               </>}
             </div>
             {!overlayCollapsed && (overlayView === "tiles"
-              ? <div aria-label="Видео участников" className={participantsOnTop
-                ? "flex h-[clamp(84px,13vh,120px)] min-h-0 gap-2 overflow-x-auto p-2"
-                : "flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2"}>
-                {visibleMembers.map((person) => renderParticipantTile(person, participantsOnTop ? "top" : "left"))}
-              </div>
+              ? <>
+                {overlayNavigation.overflow && <div ref={overlayNavigationRef} className="flex shrink-0 items-center justify-center gap-1 px-1 pb-1">
+                  <Button variant="ghost" size="icon-xs" title="Предыдущие участники" aria-label="Предыдущие участники" disabled={!overlayNavigation.canPrevious} className="text-white hover:bg-white/10 hover:text-white" onClick={() => pageOverlay(-1)}>{participantsOnTop ? <ChevronLeft size={15} /> : <ChevronUp size={15} />}</Button>
+                  <Button variant="ghost" size="icon-xs" title="Следующие участники" aria-label="Следующие участники" disabled={!overlayNavigation.canNext} className="text-white hover:bg-white/10 hover:text-white" onClick={() => pageOverlay(1)}>{participantsOnTop ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</Button>
+                </div>}
+                <div ref={overlayTilesRef} aria-label="Видео участников" onScroll={updateOverlayNavigation} className={participantsOnTop
+                  ? "flex h-[clamp(84px,13vh,120px)] w-max max-w-full min-w-0 gap-2 overflow-x-auto p-2"
+                  : "flex min-h-0 flex-col gap-2 overflow-y-auto p-2"}>
+                  {visibleMembers.map((person) => renderParticipantTile(person, participantsOnTop ? "top" : "left"))}
+                </div>
+              </>
               : <div aria-label="Список участников" className="min-h-0 flex-1 overflow-y-auto p-3">{renderParticipantList()}</div>)}
           </div>}
         </div> : <div className="grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
