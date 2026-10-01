@@ -54,10 +54,10 @@ export default function Home() {
         <div className="flex items-center gap-3" aria-label="Конфа"><span className="brand-mark"><Video size={21} strokeWidth={2.5} /></span><span className="text-xl font-bold tracking-tight">конфа<span className="text-[#6de7d4]">.</span></span></div>
         <span className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 sm:inline-flex">Встречи и вебинары до 50 человек</span>
       </header>
-      <div className="mx-auto grid max-w-7xl gap-10 px-6 pb-16 pt-10 lg:min-h-[calc(100vh-108px)] lg:grid-cols-[minmax(0,1fr)_minmax(400px,.9fr)] lg:items-center lg:gap-16 lg:px-12 lg:pb-28 lg:pt-0">
-        <section className="max-w-2xl">
+      <div className="mx-auto grid max-w-7xl gap-10 px-6 pb-16 pt-10 xl:min-h-[calc(100vh-108px)] xl:grid-cols-[minmax(0,1fr)_minmax(400px,.9fr)] xl:items-center xl:gap-16 xl:px-12 xl:pb-28 xl:pt-0">
+        <section className="min-w-0 max-w-2xl">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#6de7d4]/30 bg-[#6de7d4]/10 px-3 py-1.5 text-sm font-medium text-[#8ff4e4]"><span className="h-1.5 w-1.5 rounded-full bg-[#6de7d4]" />Пространство для разговора</div>
-          <h1 className="max-w-xl text-[clamp(3.4rem,7vw,6.7rem)] font-semibold leading-[.97] tracking-[-.065em]">Встречайтесь.<br /><span className="text-[#6de7d4]">Объясняйте.</span><br />Вместе.</h1>
+          <h1 className="max-w-xl text-[clamp(2.65rem,6vw,5rem)] font-semibold leading-[1.02] tracking-[-.055em]">Встречайтесь.<br /><span className="text-[#6de7d4]">Общайтесь.</span><br />Вместе.</h1>
           <p className="mt-7 max-w-lg text-lg leading-relaxed text-slate-300">Видеосвязь, вебинары и живые пометки прямо поверх общего экрана. Создайте комнату и пригласите людей по ссылке.</p>
           <div className="mt-10 flex flex-wrap gap-3">
             <Button className="h-13 rounded-xl bg-[#6de7d4] px-6 text-base font-semibold text-[#10243a] hover:bg-[#96f5e7]" disabled={busy !== null} onClick={() => createRoom("meeting")}><Video />{busy === "meeting" ? "Создаём…" : "Новая встреча"}</Button>

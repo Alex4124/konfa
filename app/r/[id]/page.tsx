@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { LiveKitRoom } from "@livekit/components-react";
-import { BackgroundProcessor, supportsBackgroundProcessors } from "@livekit/track-processors";
 import { createLocalVideoTrack, type LocalVideoTrack } from "livekit-client";
 import { ArrowLeft, Camera, CameraOff, Mic, MicOff, Video, Users, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RoomView } from "@/components/room-view";
 import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
+import { createStableBackgroundProcessor } from "@/lib/stable-background";
 import type { RoomKind, Role } from "@/lib/confa-types";
 
 type Joined = {
@@ -64,11 +64,16 @@ export default function RoomPage() {
     const start = async () => {
       try {
         if (background) {
-          if (!supportsBackgroundProcessors()) throw new Error("Этот браузер не поддерживает замену фона");
-          previewTrack = await createLocalVideoTrack({ processor: BackgroundProcessor({ mode: "virtual-background", imagePath: background.url }) });
-          if (cancelled) { previewTrack.stop(); return; }
-          previewTrack.attach(preview);
-        } else {
+          try {
+            previewTrack = await createLocalVideoTrack({ processor: createStableBackgroundProcessor(background.url, (message) => setError(message)) });
+            if (cancelled) { previewTrack.stop(); return; }
+            previewTrack.attach(preview);
+            return;
+          } catch (cause) {
+            if (!cancelled) setError(cause instanceof Error ? cause.message : "Обработка фона недоступна");
+          }
+        }
+        {
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           if (cancelled) { stream.getTracks().forEach((track) => track.stop()); return; }
           preview.srcObject = stream;

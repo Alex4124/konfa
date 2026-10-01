@@ -9,18 +9,49 @@ import type { AnnotationPayload } from "@/lib/confa-types";
 
 export const runtime = "edge";
 
+type ShareRequestRow = { id: string; room_id: string; member_id: string; status: string; created_at: number; updated_at: number };
+
+async function connectedParticipant(roomId: string, memberId: string): Promise<boolean> {
+  const list = await livekitRequest<{ participants?: Array<{ identity: string }> }>("RoomService", "ListParticipants", { room: roomId }, roomId);
+  return Boolean(list.participants?.some((item) => item.identity === memberId));
+}
+
+async function setScreenPermission(roomId: string, member: MemberRow, approved: boolean): Promise<void> {
+  if (!await connectedParticipant(roomId, member.id)) {
+    if (approved) throw new AppError("Участник вышел из комнаты", 409);
+    return;
+  }
+  await livekitRequest("RoomService", "UpdateParticipant", {
+    room: roomId, identity: member.id, permission: grants(roomId, member, approved),
+  }, roomId);
+}
+
+async function revokeScreenPermission(roomId: string, member: MemberRow): Promise<void> {
+  try { await setScreenPermission(roomId, member, false); }
+  catch (error) {
+    // A failed permission update must not leave an approved guest connected.
+    try { await livekitRequest("RoomService", "RemoveParticipant", { room: roomId, identity: member.id }, roomId); }
+    catch { throw error; }
+  }
+}
+
 function parts(request: Request): string[] {
   return new URL(request.url).pathname.split("/").filter(Boolean).slice(1);
 }
 
 async function roomState(request: Request, id: string): Promise<Response> {
-  await authorizeState(request, id);
+  const actor = await authorizeState(request, id);
   const room = await roomById(id);
   const database = db();
   if (room.recording_id) await refreshRecording(room.recording_id);
-  const [members, messages, annotations, recording] = await Promise.all([
+  const [members, messages, shareRequests, annotations, recording] = await Promise.all([
     database.prepare("SELECT id, name, role, can_annotate, raised_hand, removed FROM members WHERE room_id = ? AND removed = 0").bind(id).all(),
     database.prepare("SELECT id, member_id, name, body, created_at FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 100").bind(id).all(),
+    actor?.role === "host"
+      ? database.prepare("SELECT s.id, s.member_id, m.name, s.status, s.created_at FROM share_requests s JOIN members m ON m.id = s.member_id WHERE s.room_id = ? AND m.removed = 0 AND s.status IN ('pending', 'approved', 'active') ORDER BY s.created_at ASC").bind(id).all()
+      : actor
+        ? database.prepare("SELECT s.id, s.member_id, m.name, s.status, s.created_at FROM share_requests s JOIN members m ON m.id = s.member_id WHERE s.room_id = ? AND s.member_id = ?").bind(id, actor.id).all()
+        : Promise.resolve({ results: [] }),
     room.active_share_id
       ? database.prepare("SELECT id, author_id, kind, payload, created_at FROM annotations WHERE room_id = ? AND share_id = ? AND deleted = 0 ORDER BY created_at ASC LIMIT 500").bind(id, room.active_share_id).all()
       : Promise.resolve({ results: [] }),
@@ -32,6 +63,7 @@ async function roomState(request: Request, id: string): Promise<Response> {
     room: { id, kind: room.kind, status: room.status, activeShareId: room.active_share_id, activeShareOwner: room.active_share_owner, annotationsEnabled: Boolean(room.annotations_enabled) },
     members: members.results,
     messages: [...messages.results].reverse(),
+    shareRequests: shareRequests.results,
     annotations: annotations.results,
     recording: recording ? { status: recording.status, url: recording.status === "ready" && recording.expires_at && recording.expires_at > Date.now() ? `/recordings/${await recordingShareToken(recording.id)}` : null } : null,
   });
@@ -122,6 +154,7 @@ async function post(request: Request): Promise<Response> {
   if (path.length === 3 && path[2] === "message") return sendMessage(request, id, member);
   if (path.length === 3 && path[2] === "hand") return raiseHand(id, member);
   if (path.length === 3 && path[2] === "share") return updateShare(request, id, member);
+  if (path.length === 3 && path[2] === "share-requests") return updateShareRequest(request, id, member);
   if (path.length === 3 && path[2] === "annotations") return updateAnnotations(request, id, member);
   if (path.length === 3 && path[2] === "recording") return updateRecording(request, id, member);
   if (path.length === 3 && path[2] === "end") return endRoom(id, member);
@@ -177,6 +210,10 @@ async function joinRoom(request: Request, id: string): Promise<Response> {
     const now = Date.now();
     await db().prepare("INSERT INTO members (id, room_id, name, role, can_annotate, raised_hand, removed, created_at) VALUES (?, ?, ?, ?, 1, 0, 0, ?)").bind(memberId, id, name, role, now).run();
     member = { id: memberId, room_id: id, name, role, can_annotate: 1, raised_hand: 0, removed: 0, created_at: now };
+  } else {
+    if (member.role === "speaker") await revokeScreenPermission(id, member);
+    await db().prepare("UPDATE share_requests SET status = 'cancelled', updated_at = ? WHERE member_id = ? AND status IN ('pending', 'approved', 'active')").bind(Date.now(), member.id).run();
+    await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ? AND active_share_owner = ?").bind(id, member.id).run();
   }
   const origin = new URL(request.url).origin;
   return json({
@@ -205,24 +242,118 @@ async function raiseHand(id: string, member: MemberRow): Promise<Response> {
   return json({ raisedHand: Boolean(raised) });
 }
 
+async function updateShareRequest(request: Request, id: string, actor: MemberRow): Promise<Response> {
+  const input = await readJson(request);
+  const database = db();
+  const now = Date.now();
+  if (input.action === "request") {
+    if (actor.role !== "speaker") throw new AppError("Показ экрана доступен только выступающим", 403);
+    const previous = await database.prepare("SELECT status FROM share_requests WHERE member_id = ? AND room_id = ?").bind(actor.id, id).first<{ status: string }>();
+    if (previous && ["pending", "approved", "active"].includes(previous.status)) throw new AppError("Запрос уже отправлен", 409);
+    const requestId = crypto.randomUUID();
+    const created = await database.prepare("INSERT INTO share_requests (member_id, room_id, id, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?) ON CONFLICT(member_id) DO UPDATE SET id = excluded.id, status = 'pending', created_at = excluded.created_at, updated_at = excluded.updated_at WHERE share_requests.status NOT IN ('pending', 'approved', 'active')").bind(actor.id, id, requestId, now, now).run();
+    if (!created.meta.changes) throw new AppError("Запрос уже отправлен", 409);
+    await broadcast(id, { type: "state-changed" });
+    return json({ id: requestId, status: "pending" }, 201);
+  }
+  if (input.action === "cancel") {
+    if (typeof input.requestId !== "string") throw new AppError("Укажите запрос");
+    const current = await database.prepare("SELECT * FROM share_requests WHERE id = ? AND room_id = ? AND member_id = ?").bind(input.requestId, id, actor.id).first<ShareRequestRow>();
+    if (!current || !["pending", "approved"].includes(current.status)) throw new AppError("Запрос уже неактуален", 409);
+    if (current.status === "approved") await revokeScreenPermission(id, actor);
+    const cancelled = await database.prepare("UPDATE share_requests SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('pending', 'approved')").bind(now, current.id).run();
+    if (!cancelled.meta.changes) throw new AppError("Показ уже начался", 409);
+    await broadcast(id, { type: "state-changed" });
+    return json({ status: "cancelled" });
+  }
+  if (input.action === "revoke") {
+    requireHost(actor);
+    if (typeof input.requestId !== "string") throw new AppError("Укажите запрос");
+    const approved = await database.prepare("SELECT * FROM share_requests WHERE id = ? AND room_id = ? AND status = 'approved'").bind(input.requestId, id).first<ShareRequestRow>();
+    if (!approved) throw new AppError("Разрешение уже неактуально", 409);
+    const target = await database.prepare("SELECT * FROM members WHERE id = ? AND room_id = ?").bind(approved.member_id, id).first<MemberRow>();
+    if (target) await revokeScreenPermission(id, target);
+    const revoked = await database.prepare("UPDATE share_requests SET status = 'cancelled', updated_at = ? WHERE id = ? AND status = 'approved'").bind(now, approved.id).run();
+    if (!revoked.meta.changes) throw new AppError("Показ уже начался", 409);
+    await broadcast(id, { type: "state-changed" });
+    return json({ status: "cancelled" });
+  }
+  if (input.action === "approve" || input.action === "deny") {
+    requireHost(actor);
+    if (typeof input.requestId !== "string") throw new AppError("Укажите запрос");
+    const pending = await database.prepare("SELECT * FROM share_requests WHERE id = ? AND room_id = ? AND status = 'pending'").bind(input.requestId, id).first<ShareRequestRow>();
+    if (!pending) throw new AppError("Запрос уже неактуален", 409);
+    const target = await database.prepare("SELECT * FROM members WHERE id = ? AND room_id = ? AND removed = 0").bind(pending.member_id, id).first<MemberRow>();
+    if (!target || target.role !== "speaker") throw new AppError("Участник больше не может показывать экран", 409);
+    if (input.action === "deny") {
+      const denied = await database.prepare("UPDATE share_requests SET status = 'denied', updated_at = ? WHERE id = ? AND status = 'pending'").bind(now, pending.id).run();
+      if (!denied.meta.changes) throw new AppError("Запрос уже неактуален", 409);
+      await broadcast(id, { type: "state-changed" });
+      return json({ status: "denied" });
+    }
+    const room = await roomById(id);
+    if (room.active_share_id) throw new AppError("Подождите завершения текущего показа", 409);
+    const other = await database.prepare("SELECT id FROM share_requests WHERE room_id = ? AND status IN ('approved', 'active') LIMIT 1").bind(id).first();
+    if (other) throw new AppError("Другой показ уже одобрен", 409);
+    await setScreenPermission(id, target, true);
+    try {
+      const result = await database.prepare("UPDATE share_requests SET status = 'approved', updated_at = ? WHERE id = ? AND status = 'pending'").bind(now, pending.id).run();
+      if (!result.meta.changes) throw new AppError("Запрос уже неактуален", 409);
+    } catch (error) {
+      await revokeScreenPermission(id, target);
+      if (error instanceof AppError) throw error;
+      throw new AppError("Другой показ уже одобрен", 409);
+    }
+    await broadcast(id, { type: "state-changed" });
+    return json({ status: "approved" });
+  }
+  throw new AppError("Неизвестное действие");
+}
+
 async function updateShare(request: Request, id: string, member: MemberRow): Promise<Response> {
   if (member.role === "viewer") throw new AppError("Зритель не может показывать экран", 403);
   const input = await readJson(request);
   const room = await roomById(id);
   if (input.action === "start") {
+    let approved: ShareRequestRow | null = null;
+    if (member.role !== "host") {
+      if (typeof input.requestId !== "string") throw new AppError("Сначала запросите разрешение ведущего", 403);
+      approved = await db().prepare("SELECT * FROM share_requests WHERE id = ? AND member_id = ? AND room_id = ? AND status = 'approved'").bind(input.requestId, member.id, id).first<ShareRequestRow>();
+      if (!approved) throw new AppError("Сначала запросите разрешение ведущего", 403);
+    }
     if (room.active_share_id && room.active_share_owner !== member.id) {
       const active = await livekitRequest<{ participants?: Array<{ identity: string; tracks?: Array<{ source?: string }> }> }>("RoomService", "ListParticipants", { room: id }, id);
       const stillSharing = active.participants?.find((person) => person.identity === room.active_share_owner)?.tracks?.some((track) => track.source === "SCREEN_SHARE");
       if (stillSharing) throw new AppError("Другой участник уже показывает экран", 409);
+      if (room.active_share_owner) {
+        const previousOwner = await db().prepare("SELECT * FROM members WHERE id = ? AND room_id = ?").bind(room.active_share_owner, id).first<MemberRow>();
+        if (previousOwner?.role === "speaker") await revokeScreenPermission(id, previousOwner);
+        await db().prepare("UPDATE share_requests SET status = 'finished', updated_at = ? WHERE member_id = ? AND status = 'active'").bind(Date.now(), room.active_share_owner).run();
+      }
+      await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ? AND active_share_id = ?").bind(id, room.active_share_id).run();
     }
+    if (room.active_share_owner === member.id) throw new AppError("Вы уже показываете экран", 409);
     const shareId = crypto.randomUUID();
-    await db().prepare("UPDATE rooms SET active_share_id = ?, active_share_owner = ? WHERE id = ?").bind(shareId, member.id, id).run();
+    const claimed = await db().prepare("UPDATE rooms SET active_share_id = ?, active_share_owner = ? WHERE id = ? AND active_share_id IS NULL AND status = 'open'").bind(shareId, member.id, id).run();
+    if (!claimed.meta.changes) throw new AppError("Другой участник уже показывает экран", 409);
+    if (approved) {
+      const consumed = await db().prepare("UPDATE share_requests SET status = 'active', updated_at = ? WHERE id = ? AND member_id = ? AND status = 'approved'").bind(Date.now(), approved.id, member.id).run();
+      if (!consumed.meta.changes) {
+        await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ? AND active_share_id = ?").bind(id, shareId).run();
+        throw new AppError("Разрешение на показ больше не действует", 403);
+      }
+    }
     await broadcast(id, { type: "state-changed" });
     return json({ shareId });
   }
   if (input.action === "stop") {
     if (room.active_share_owner !== member.id && member.role !== "host") throw new AppError("Нет доступа", 403);
-    await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ?").bind(id).run();
+    if (room.active_share_owner) {
+      const owner = await db().prepare("SELECT * FROM members WHERE id = ? AND room_id = ?").bind(room.active_share_owner, id).first<MemberRow>();
+      if (owner?.role === "speaker") await revokeScreenPermission(id, owner);
+      await db().prepare("UPDATE share_requests SET status = 'finished', updated_at = ? WHERE member_id = ? AND status = 'active'").bind(Date.now(), room.active_share_owner).run();
+    }
+    if (room.active_share_id) await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ? AND active_share_id = ?").bind(id, room.active_share_id).run();
     await broadcast(id, { type: "state-changed" });
     return json({ stopped: true });
   }
@@ -315,13 +446,22 @@ async function updateMember(request: Request, id: string, targetId: string, acto
   if (!target) throw new AppError("Участник не найден", 404);
   if (input.action === "role") {
     if (input.role !== "speaker" && input.role !== "viewer") throw new AppError("Некорректная роль");
+    if (input.role === "viewer") await revokeScreenPermission(id, { ...target, role: "viewer" });
+    else await setScreenPermission(id, { ...target, role: "speaker" }, false);
     await db().prepare("UPDATE members SET role = ?, raised_hand = 0 WHERE id = ?").bind(input.role, targetId).run();
+    if (input.role === "viewer") {
+      await db().prepare("UPDATE share_requests SET status = 'cancelled', updated_at = ? WHERE member_id = ? AND status IN ('pending', 'approved', 'active')").bind(Date.now(), targetId).run();
+      await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ? AND active_share_owner = ?").bind(id, targetId).run();
+    }
     target.role = input.role;
   } else if (input.action === "annotation") {
     await db().prepare("UPDATE members SET can_annotate = ? WHERE id = ?").bind(input.enabled ? 1 : 0, targetId).run();
     target.can_annotate = input.enabled ? 1 : 0;
   } else if (input.action === "remove") {
+    if (target.role === "speaker") await revokeScreenPermission(id, target);
     await db().prepare("UPDATE members SET removed = 1 WHERE id = ?").bind(targetId).run();
+    await db().prepare("UPDATE share_requests SET status = 'cancelled', updated_at = ? WHERE member_id = ? AND status IN ('pending', 'approved', 'active')").bind(Date.now(), targetId).run();
+    await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ? AND active_share_owner = ?").bind(id, targetId).run();
     try { await livekitRequest("RoomService", "RemoveParticipant", { room: id, identity: targetId }, id); } catch (error) { console.error(error); }
     await broadcast(id, { type: "state-changed" });
     return json({ removed: true });
@@ -332,8 +472,6 @@ async function updateMember(request: Request, id: string, targetId: string, acto
     await livekitRequest("RoomService", "MutePublishedTrack", { room: id, identity: targetId, track_sid: track.sid, muted: true }, id);
     return json({ muted: true });
   } else throw new AppError("Неизвестное действие");
-  try { await livekitRequest("RoomService", "UpdateParticipant", { room: id, identity: targetId, permission: grants(id, target) }, id); }
-  catch (error) { console.error("Participant will receive new permissions on rejoin", error); }
   await broadcast(id, { type: "state-changed" });
   return json({ role: target.role, canAnnotate: Boolean(target.can_annotate) });
 }

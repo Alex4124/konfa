@@ -1,4 +1,5 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const rooms = sqliteTable("rooms", {
   id: text("id").primaryKey(),
@@ -24,6 +25,18 @@ export const members = sqliteTable("members", {
   removed: integer("removed", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at").notNull(),
 }, (table) => [index("members_room_idx").on(table.roomId)]);
+
+export const shareRequests = sqliteTable("share_requests", {
+  memberId: text("member_id").primaryKey().references(() => members.id),
+  roomId: text("room_id").notNull().references(() => rooms.id),
+  id: text("id").notNull(),
+  status: text("status").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  index("share_requests_room_status_idx").on(table.roomId, table.status),
+  uniqueIndex("one_approved_share_per_room_idx").on(table.roomId).where(sql`${table.status} IN ('approved', 'active')`),
+]);
 
 export const messages = sqliteTable("messages", {
   id: text("id").primaryKey(),

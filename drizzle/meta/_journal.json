@@ -15,6 +15,13 @@
       "when": 1790797216892,
       "tag": "0001_petite_mentallo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790859178453,
+      "tag": "0002_careful_overlord",
+      "breakpoints": true
     }
   ]
 }

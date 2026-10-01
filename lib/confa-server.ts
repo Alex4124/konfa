@@ -150,11 +150,12 @@ export function requireHost(member: MemberRow): void {
   if (member.role !== "host") throw new AppError("Действие доступно только ведущему", 403);
 }
 
-export function grants(roomId: string, member: Pick<MemberRow, "role" | "can_annotate">): Record<string, unknown> {
+export function grants(roomId: string, member: Pick<MemberRow, "role">, screenApproved = false): Record<string, unknown> {
   const presenter = member.role === "host" || member.role === "speaker";
+  const screen = member.role === "host" || (member.role === "speaker" && screenApproved);
   return {
     room: roomId, roomJoin: true, canSubscribe: true,
-    canPublish: presenter, canPublishSources: presenter ? ["camera", "microphone", "screen_share", "screen_share_audio"] : [],
+    canPublish: presenter, canPublishSources: presenter ? ["camera", "microphone", ...(screen ? ["screen_share", "screen_share_audio"] : [])] : [],
     canPublishData: true,
   };
 }

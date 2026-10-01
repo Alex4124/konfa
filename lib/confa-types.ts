@@ -6,10 +6,12 @@ export type AnnotationPayload = { color: string; points?: Point[]; point?: Point
 export type Annotation = { id: string; author_id: string; kind: Tool; payload: string; created_at: number };
 export type Member = { id: string; name: string; role: Role; can_annotate: number; raised_hand: number; removed: number };
 export type Message = { id: string; member_id: string; name: string; body: string; created_at: number };
+export type ShareRequest = { id: string; member_id: string; name: string; status: "pending" | "approved" | "active" | "denied" | "cancelled" | "finished"; created_at: number };
 export type RoomState = {
   room: { id: string; kind: RoomKind; status: string; activeShareId: string | null; activeShareOwner: string | null; annotationsEnabled: boolean };
   members: Member[];
   messages: Message[];
+  shareRequests: ShareRequest[];
   annotations: Annotation[];
   recording: { status: string; url: string | null } | null;
 };

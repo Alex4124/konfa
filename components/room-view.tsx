@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
-import { BackgroundProcessor, supportsBackgroundProcessors, type BackgroundProcessorWrapper } from "@livekit/track-processors";
 import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication } from "livekit-client";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Hand, LayoutGrid, List, Maximize2, MessageSquare, Mic, MicOff, Minimize2, MonitorUp, MonitorX, PhoneOff, Radio, Users, Video, VideoOff, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Hand, LayoutGrid, List, Maximize2, MessageSquare, Mic, MicOff, Minimize2, MonitorUp, MonitorX, PhoneOff, Radio, Smile, Users, Video, VideoOff, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AnnotationLayer } from "@/components/annotation-layer";
 import { SharedScreen } from "@/components/shared-screen";
 import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
+import { createStableBackgroundProcessor, type StableBackgroundProcessor } from "@/lib/stable-background";
 import type { AnnotationPayload, Role, RoomKind, RoomState, Tool } from "@/lib/confa-types";
 
 type Joined = {
@@ -19,6 +20,7 @@ type Joined = {
 type Props = { id: string; joined: Joined; initialCamera: boolean; background: VideoBackground | null; onBackgroundChange: (background: VideoBackground | null) => void; onLeave: () => void; onEnded: () => void; connectionError: string };
 
 type FocusController = { setFocusBehavior: (behavior: "no-focus-change") => void };
+const chatEmoji = ["😀", "😄", "😂", "😊", "😍", "👍", "👏", "🎉", "❤️", "🙏", "🤔", "😮", "😢", "🔥", "👋", "✅", "🙌", "😎", "🤝", "💯"];
 
 export function RoomView({ id, joined, initialCamera, background, onBackgroundChange, onLeave, onEnded, connectionError }: Props) {
   const room = useRoomContext();
@@ -34,6 +36,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [overlayNavigation, setOverlayNavigation] = useState({ overflow: false, canPrevious: false, canNext: false });
   const [participantsOnTop, setParticipantsOnTop] = useState(true);
   const [message, setMessage] = useState("");
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [busy, setBusy] = useState("");
   const [drafts, setDrafts] = useState<Array<{ id: string; shareId: string; kind: Tool; payload: AnnotationPayload }>>([]);
   const [mic, setMic] = useState(room.localParticipant.isMicrophoneEnabled);
@@ -44,10 +47,11 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const overlayNavigationRef = useRef<HTMLDivElement>(null);
   const overlayTilesRef = useRef<HTMLDivElement>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
+  const messageInput = useRef<HTMLInputElement>(null);
   const stoppingShare = useRef(false);
   const endedRef = useRef(false);
   const cameraStarting = useRef(false);
-  const cameraProcessor = useRef<BackgroundProcessorWrapper | null>(null);
+  const cameraProcessor = useRef<StableBackgroundProcessor | null>(null);
   const appliedBackgroundUrl = useRef<string | null>(null);
   const backgroundQueue = useRef<Promise<void>>(Promise.resolve());
   const backgroundRef = useRef(background);
@@ -64,6 +68,9 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const hasActiveScreen = Boolean(activeScreen);
   const expanded = Boolean(activeScreen && state?.room.activeShareId === expandedShareId);
   const isSharing = screens.some((track) => track.participant.identity === joined.member.id);
+  const myShareRequest = state?.shareRequests.find((item) => item.member_id === joined.member.id);
+  const pendingShareRequests = state?.shareRequests.filter((item) => item.status === "pending") || [];
+  const approvedShareRequest = state?.shareRequests.find((item) => item.status === "approved");
   const visibleMembers = state?.members.filter((person) => activeIds.has(person.id)) || [];
   const overlayMemberIds = visibleMembers.map((person) => person.id).join("\u0000");
   const visibleDrafts = drafts.filter((item) => {
@@ -199,10 +206,9 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       if (selected?.url === appliedBackgroundUrl.current) return;
       try {
         if (selected) {
-          if (!supportsBackgroundProcessors()) throw new Error("Этот браузер не поддерживает замену фона");
-          if (cameraProcessor.current) await cameraProcessor.current.switchTo({ mode: "virtual-background", imagePath: selected.url });
+          if (cameraProcessor.current) await cameraProcessor.current.switchBackground(selected.url);
           else {
-            const processor = BackgroundProcessor({ mode: "virtual-background", imagePath: selected.url });
+            const processor = createStableBackgroundProcessor(selected.url, setError);
             await track.setProcessor(processor);
             cameraProcessor.current = processor;
           }
@@ -212,7 +218,12 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
           cameraProcessor.current = null;
           appliedBackgroundUrl.current = null;
         }
-      } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось применить фон"); }
+      } catch (cause) {
+        await track.stopProcessor().catch(() => {});
+        cameraProcessor.current = null;
+        appliedBackgroundUrl.current = null;
+        setError(cause instanceof Error ? cause.message : "Не удалось применить фон");
+      }
     });
     return backgroundQueue.current;
   }, [room]);
@@ -221,16 +232,23 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     if (cameraStarting.current || room.localParticipant.isCameraEnabled) return;
     cameraStarting.current = true;
     setCameraBusy(true);
-    let processor: BackgroundProcessorWrapper | null = null;
+    let processor: StableBackgroundProcessor | null = null;
     try {
       const selected = backgroundRef.current;
       if (selected) {
-        if (!supportsBackgroundProcessors()) throw new Error("Этот браузер не поддерживает замену фона");
-        processor = BackgroundProcessor({ mode: "virtual-background", imagePath: selected.url });
+        try { processor = createStableBackgroundProcessor(selected.url, setError); }
+        catch (cause) { setError(cause instanceof Error ? cause.message : "Обработка фона недоступна"); }
       }
-      await room.localParticipant.setCameraEnabled(true, processor ? { processor } : undefined);
+      try { await room.localParticipant.setCameraEnabled(true, processor ? { processor } : undefined); }
+      catch (cause) {
+        if (!processor) throw cause;
+        await processor.destroy().catch(() => {});
+        processor = null;
+        setError(cause instanceof Error ? cause.message : "Обработка фона недоступна");
+        await room.localParticipant.setCameraEnabled(true);
+      }
       cameraProcessor.current = processor;
-      appliedBackgroundUrl.current = selected?.url || null;
+      appliedBackgroundUrl.current = processor ? selected?.url || null : null;
       setCam(true);
       if (backgroundRef.current?.url !== selected?.url) await applyCurrentBackground();
     } catch (cause) {
@@ -285,32 +303,40 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
 
   async function toggleShare() {
     if (isSharing) { await stopShare(); return; }
+    if (role !== "host" && myShareRequest?.status !== "approved") {
+      setError("Сначала дождитесь разрешения ведущего");
+      return;
+    }
     if (state?.room.activeShareOwner && state.room.activeShareOwner !== joined.member.id) {
       setError("Другой участник уже показывает экран");
       return;
     }
     setBusy("share"); setError("");
     let createdTracks: Awaited<ReturnType<typeof room.localParticipant.createScreenTracks>> = [];
+    let reserved = false;
     try {
-      if (role === "host") {
+      {
         const Controller = (window as Window & { CaptureController?: new () => FocusController }).CaptureController;
         let controller: FocusController | undefined;
-        if (Controller && "setFocusBehavior" in Controller.prototype) {
+        if (role === "host" && Controller && "setFocusBehavior" in Controller.prototype) {
           try {
             controller = new Controller();
             controller.setFocusBehavior("no-focus-change");
           } catch { controller = undefined; }
         }
         createdTracks = await room.localParticipant.createScreenTracks({ selfBrowserSurface: "exclude", controller });
-        for (const track of createdTracks) await room.localParticipant.publishTrack(track);
-      } else {
-        await room.localParticipant.setScreenShareEnabled(true);
       }
-      await api("share", { action: "start" });
+      await api("share", { action: "start", ...(role === "host" ? {} : { requestId: myShareRequest?.id }) });
+      reserved = true;
+      for (const track of createdTracks) await room.localParticipant.publishTrack(track);
       await refresh();
     } catch (cause) {
+      stoppingShare.current = true;
       await room.localParticipant.setScreenShareEnabled(false).catch(() => {});
       createdTracks.forEach((track) => track.stop());
+      if (reserved) await api("share", { action: "stop" }).catch(() => {});
+      stoppingShare.current = false;
+      await refresh();
       setError(cause instanceof Error ? cause.message : "Не удалось показать экран");
     } finally { setBusy(""); }
   }
@@ -329,6 +355,19 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     if (!body) return;
     const result = await action("message", { body }, "message");
     if (result) setMessage("");
+  }
+
+  function insertEmoji(emoji: string) {
+    const input = messageInput.current;
+    const start = input?.selectionStart ?? message.length;
+    const end = input?.selectionEnd ?? start;
+    if (message.length - (end - start) + emoji.length > 1000) return;
+    setMessage(message.slice(0, start) + emoji + message.slice(end));
+    setEmojiOpen(false);
+    window.requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(start + emoji.length, start + emoji.length);
+    });
   }
   function sendDraft(kind: Tool, payload: AnnotationPayload | null) {
     if (!state?.room.activeShareId || !canDraw) return;
@@ -373,6 +412,20 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   function renderParticipantList() {
     return <>
       {role === "host" && state && <Button variant="secondary" size="sm" disabled={busy === "annotationAccess"} className="mb-3 w-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void action("annotations", { action: "setAccess", enabled: !state.room.annotationsEnabled }, "annotationAccess")}>Пометки: {state.room.annotationsEnabled ? "все" : "только ведущий"}</Button>}
+      {role === "host" && approvedShareRequest && <div className="mb-3 rounded-xl border border-[#6de7d4]/30 bg-[#6de7d4]/10 p-3 text-sm">
+        <p>Показ разрешён: {approvedShareRequest.name}</p>
+        <Button size="sm" variant="secondary" disabled={busy === "shareRequest"} className="mt-2" onClick={() => void action("share-requests", { action: "revoke", requestId: approvedShareRequest.id }, "shareRequest")}>Отозвать разрешение</Button>
+      </div>}
+      {role === "host" && pendingShareRequests.length > 0 && <div className="mb-4 space-y-2 rounded-xl border border-[#6de7d4]/30 bg-[#6de7d4]/10 p-3">
+        <p className="text-sm font-semibold text-[#9af4e7]">Запросы на показ экрана</p>
+        {pendingShareRequests.map((shareRequest) => <div key={shareRequest.id} className="rounded-lg bg-[#20344e] p-2">
+          <p className="truncate text-sm">{shareRequest.name}</p>
+          <div className="mt-2 flex gap-2">
+            <Button size="sm" disabled={busy === "shareRequest" || Boolean(state?.room.activeShareId) || Boolean(approvedShareRequest)} onClick={() => void action("share-requests", { action: "approve", requestId: shareRequest.id }, "shareRequest")}>Разрешить</Button>
+            <Button size="sm" variant="secondary" disabled={busy === "shareRequest"} onClick={() => void action("share-requests", { action: "deny", requestId: shareRequest.id }, "shareRequest")}>Отклонить</Button>
+          </div>
+        </div>)}
+      </div>}
       <p className="px-2 pb-2 text-xs uppercase tracking-[.12em] text-slate-400">В комнате · {visibleMembers.length}</p>
       {visibleMembers.map((person) => <div key={person.id} className="mb-2 rounded-xl bg-[#20344e] p-3">
         <div className="flex items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#6de7d4]/20 text-sm font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{person.name}{person.id === joined.member.id ? " (вы)" : ""}</p><p className="text-xs text-slate-400">{person.role === "host" ? "Ведущий" : person.role === "speaker" ? "Выступающий" : "Зритель"}{person.raised_hand ? " · поднял руку" : ""}</p></div></div>
@@ -498,7 +551,16 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><TabsList className="bg-[#283a54]"><TabsTrigger value="chat">Чат</TabsTrigger><TabsTrigger value="people">Участники</TabsTrigger></TabsList><Button variant="ghost" size="icon" aria-label="Закрыть панель" className="text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setPanel(null)}><X /></Button></div>
           <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">{state?.messages.length ? state.messages.map((item) => <div key={item.id} className="space-y-1"><div className="flex items-baseline justify-between gap-2"><strong className="text-sm text-[#9af4e7]">{item.name}</strong><span className="text-xs text-slate-500">{new Date(item.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</span></div><p className="break-words text-sm leading-relaxed text-slate-100">{item.body}</p></div>) : <p className="pt-8 text-center text-sm text-slate-400">Сообщений пока нет</p>}<div ref={chatEnd} /></div>
-            <form onSubmit={(event) => void sendMessage(event)} className="flex gap-2 border-t border-white/10 p-3"><input aria-label="Сообщение" maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Написать сообщение…" className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-[#213650] px-3 text-sm outline-none focus:border-[#6de7d4]" /><Button type="submit" disabled={!message.trim() || busy === "message"} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]">Отправить</Button></form>
+            <form onSubmit={(event) => void sendMessage(event)} className="flex gap-2 border-t border-white/10 p-3">
+              <input ref={messageInput} aria-label="Сообщение" maxLength={1000} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Написать сообщение…" className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-[#213650] px-3 text-sm outline-none focus:border-[#6de7d4]" />
+              <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+                <PopoverTrigger asChild><Button type="button" variant="secondary" size="icon" title="Добавить смайлик" aria-label="Добавить смайлик" className="shrink-0 bg-[#2d415d] text-white hover:bg-[#3e5673]"><Smile size={19} /></Button></PopoverTrigger>
+                <PopoverContent align="end" side="top" className="grid w-60 grid-cols-5 gap-1 border-white/15 bg-[#1c2c45] p-2">
+                  {chatEmoji.map((emoji) => <button key={emoji} type="button" className="grid h-9 w-9 place-items-center rounded-md text-xl hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-[#6de7d4]" aria-label={`Вставить ${emoji}`} onClick={() => insertEmoji(emoji)}>{emoji}</button>)}
+                </PopoverContent>
+              </Popover>
+              <Button type="submit" disabled={!message.trim() || busy === "message"} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]">Отправить</Button>
+            </form>
           </TabsContent>
           <TabsContent value="people" className="min-h-0 flex-1 overflow-y-auto p-3">
             {renderParticipantList()}
@@ -514,11 +576,16 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
           <Button variant="secondary" size="icon-lg" title={mic ? "Выключить микрофон" : "Включить микрофон"} aria-label={mic ? "Выключить микрофон" : "Включить микрофон"} className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void toggleMic()}>{mic ? <Mic /> : <MicOff />}</Button>
           <Button variant="secondary" size="icon-lg" title={cam ? "Выключить камеру" : "Включить камеру"} aria-label={cam ? "Выключить камеру" : "Включить камеру"} disabled={cameraBusy} className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => void toggleCam()}>{cam ? <Video /> : <VideoOff />}</Button>
           <BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} compact />
-          <Button variant="secondary" size="icon-lg" title={isSharing ? "Остановить демонстрацию" : "Показать экран"} aria-label={isSharing ? "Остановить демонстрацию" : "Показать экран"} disabled={busy === "share"} className={`rounded-full text-white hover:bg-[#3e5673] ${isSharing ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => void toggleShare()}>{isSharing ? <MonitorX /> : <MonitorUp />}</Button>
+          <Button variant="secondary" size="icon-lg" title={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} aria-label={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} disabled={busy === "share" || busy === "shareRequest" || (role !== "host" && myShareRequest?.status === "active" && !isSharing)} className={`rounded-full text-white hover:bg-[#3e5673] ${isSharing || myShareRequest?.status === "approved" ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => {
+            if (isSharing || role === "host" || myShareRequest?.status === "approved") void toggleShare();
+            else if (myShareRequest?.status === "pending") void action("share-requests", { action: "cancel", requestId: myShareRequest.id }, "shareRequest");
+            else void action("share-requests", { action: "request" }, "shareRequest");
+          }}>{isSharing ? <MonitorX /> : <MonitorUp />}</Button>
+          {role !== "host" && ["pending", "approved", "denied"].includes(myShareRequest?.status || "") && <span className="max-w-28 shrink-0 text-xs text-slate-200">{myShareRequest?.status === "pending" ? "Ждём ведущего" : myShareRequest?.status === "approved" ? "Показ разрешён" : "Ведущий отклонил"}</span>}
         </>}
         <Button variant="secondary" size="icon-lg" title="Поднять или опустить руку" aria-label="Поднять или опустить руку" className={`rounded-full text-white hover:bg-[#3e5673] ${self?.raised_hand ? "bg-amber-500/40" : "bg-[#2d415d]"}`} onClick={() => void action("hand", {})}><Hand /></Button>
         <Button variant="secondary" size="icon-lg" title="Чат" aria-label="Чат" className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => setPanel(panel === "chat" ? null : "chat")}><MessageSquare /></Button>
-        <Button variant="secondary" size="icon-lg" title="Участники" aria-label="Участники" className="rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => setPanel(panel === "people" ? null : "people")}><Users /></Button>
+        <Button variant="secondary" size="icon-lg" title={pendingShareRequests.length ? `Участники, запросов на показ: ${pendingShareRequests.length}` : "Участники"} aria-label={pendingShareRequests.length ? `Участники, запросов на показ: ${pendingShareRequests.length}` : "Участники"} className="relative rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={() => setPanel(panel === "people" ? null : "people")}><Users />{role === "host" && pendingShareRequests.length > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[#6de7d4] px-1 text-[11px] font-bold text-[#10243a]">{pendingShareRequests.length}</span>}</Button>
         {role === "host" && <Button variant="secondary" size="icon-lg" title={recordingStatus === "recording" ? "Остановить запись" : "Начать запись"} aria-label={recordingStatus === "recording" ? "Остановить запись" : "Начать запись"} disabled={busy === "recording" || recordingStatus === "processing"} className={`rounded-full text-white hover:bg-[#3e5673] ${recordingStatus === "recording" ? "bg-rose-500/40" : "bg-[#2d415d]"}`} onClick={() => void action("recording", { action: recordingStatus === "recording" ? "stop" : "start" }, "recording")}><Radio /></Button>}
       </div>
       <div className="flex items-center gap-2">
