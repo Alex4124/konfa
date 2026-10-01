@@ -14,7 +14,7 @@ type Props = {
   canDraw?: boolean;
   onAdd?: (kind: Tool, payload: AnnotationPayload) => Promise<boolean>;
   onMove?: (id: string, dx: number, dy: number) => Promise<boolean>;
-  onAction?: (action: "undo" | "clear" | "erase", targetId?: string) => Promise<void>;
+  onAction?: (action: "undo" | "clear" | "erase", targetId?: string) => Promise<boolean>;
   onDraft?: (kind: Tool, payload: AnnotationPayload | null) => void;
   canClear?: boolean;
   memberId?: string;
@@ -83,21 +83,22 @@ function smoothPath(points: Point[]): string {
   return `${path} L${lastX} ${lastY}`;
 }
 
-function renderAnnotation(id: string, kind: Tool, data: AnnotationPayload, size: CanvasSize, onErase?: (id: string) => void, onMoveStart?: (id: string, event: ReactPointerEvent<SVGElement>) => void) {
+function renderAnnotation(id: string, kind: Tool, data: AnnotationPayload, size: CanvasSize, erasable = false, onMoveStart?: (id: string, event: ReactPointerEvent<SVGElement>) => void) {
   const color = data.color || "#6de7d4";
   const strokeWidth = typeof data.strokeWidth === "number" && data.strokeWidth >= 1 && data.strokeWidth <= 24 ? data.strokeWidth : kind === "marker" ? 23 : 5;
   const points = (data.points || []).map(([x, y]): Point => [x * size.width, y * size.height]);
-  const onClick = onErase ? () => onErase(id) : undefined;
   const onPointerDown = onMoveStart ? (event: ReactPointerEvent<SVGElement>) => onMoveStart(id, event) : undefined;
-  const style = { pointerEvents: onMoveStart ? "all" as const : onErase ? "stroke" as const : "none" as const, cursor: onMoveStart ? "grab" : onErase ? "crosshair" : undefined };
-  const strokeProps = { fill: onMoveStart ? "transparent" : "none", stroke: color, strokeWidth, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, onClick, onPointerDown, style };
+  const style = { pointerEvents: onMoveStart ? "all" as const : "none" as const, cursor: onMoveStart ? "grab" : undefined };
+  const strokeProps = { fill: onMoveStart ? "transparent" : "none", stroke: color, strokeWidth, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, onPointerDown, style };
+  const hitProps = { fill: "none", stroke: "transparent", strokeWidth: Math.max(24, strokeWidth + 16), strokeLinecap: "round" as const, strokeLinejoin: "round" as const, pointerEvents: "stroke" as const };
   const renderPath = (d: string, opacity = 1) => <g key={id}>
     <path d={d} strokeOpacity={opacity} {...strokeProps} style={{ pointerEvents: onMoveStart ? "none" : style.pointerEvents, cursor: style.cursor }} />
     {onMoveStart && <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(18, strokeWidth + 12)} strokeLinecap="round" strokeLinejoin="round" pointerEvents="stroke" onPointerDown={onPointerDown} style={{ cursor: "grab" }} />}
+    {erasable && <path d={d} {...hitProps} data-annotation-id={id} />}
   </g>;
 
   if (kind === "text" && data.point) {
-    return <text key={id} x={data.point[0] * size.width} y={data.point[1] * size.height} dominantBaseline="hanging" fill={color} fontSize={Math.max(16, 36 * size.height / 1000)} fontWeight="700" paintOrder="stroke" stroke="#0e192c" strokeWidth={Math.max(2, 4 * size.height / 1000)} pointerEvents={onMoveStart ? "bounding-box" : onErase ? "auto" : "none"} onClick={onClick} onPointerDown={onPointerDown} style={{ cursor: onMoveStart ? "grab" : onErase ? "crosshair" : undefined }}>{data.text}</text>;
+    return <text key={id} x={data.point[0] * size.width} y={data.point[1] * size.height} dominantBaseline="hanging" fill={color} fontSize={Math.max(16, 36 * size.height / 1000)} fontWeight="700" paintOrder="stroke" stroke="#0e192c" strokeWidth={Math.max(2, 4 * size.height / 1000)} pointerEvents={onMoveStart || erasable ? "bounding-box" : "none"} data-annotation-id={erasable ? id : undefined} onPointerDown={onPointerDown} style={{ cursor: onMoveStart ? "grab" : undefined }}>{data.text}</text>;
   }
   if (!points.length) return null;
   if (kind === "pen" || kind === "marker") {
@@ -111,6 +112,7 @@ function renderAnnotation(id: string, kind: Tool, data: AnnotationPayload, size:
     return <g key={id}>
       <line x1={x1} y1={y1} x2={x2} y2={y2} strokeDasharray={kind === "dashed" ? `${strokeWidth * 3} ${strokeWidth * 2}` : undefined} {...strokeProps} style={{ pointerEvents: onMoveStart ? "none" : style.pointerEvents, cursor: style.cursor }} />
       {onMoveStart && <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(18, strokeWidth + 12)} strokeLinecap="round" pointerEvents="stroke" onPointerDown={onPointerDown} style={{ cursor: "grab" }} />}
+      {erasable && <line x1={x1} y1={y1} x2={x2} y2={y2} {...hitProps} data-annotation-id={id} />}
     </g>;
   }
   if (kind === "arrow") {
@@ -122,18 +124,20 @@ function renderAnnotation(id: string, kind: Tool, data: AnnotationPayload, size:
 
   const left = Math.min(x1, x2), top = Math.min(y1, y2);
   const width = Math.abs(x2 - x1), height = Math.abs(y2 - y1);
-  if (kind === "rect") return <rect key={id} x={left} y={top} width={width} height={height} {...strokeProps} />;
+  if (kind === "rect") return <g key={id}><rect x={left} y={top} width={width} height={height} {...strokeProps} />{erasable && <rect x={left} y={top} width={width} height={height} {...hitProps} data-annotation-id={id} />}</g>;
   if (kind === "circle") {
     const diameter = Math.min(width, height);
     const circleLeft = x2 >= x1 ? x1 : x1 - diameter;
     const circleTop = y2 >= y1 ? y1 : y1 - diameter;
-    return <circle key={id} cx={circleLeft + diameter / 2} cy={circleTop + diameter / 2} r={diameter / 2} {...strokeProps} />;
+    return <g key={id}><circle cx={circleLeft + diameter / 2} cy={circleTop + diameter / 2} r={diameter / 2} {...strokeProps} />{erasable && <circle cx={circleLeft + diameter / 2} cy={circleTop + diameter / 2} r={diameter / 2} {...hitProps} data-annotation-id={id} />}</g>;
   }
   if (kind === "triangle") {
-    return <polygon key={id} points={`${left + width / 2},${top} ${left + width},${top + height} ${left},${top + height}`} {...strokeProps} />;
+    const vertices = `${left + width / 2},${top} ${left + width},${top + height} ${left},${top + height}`;
+    return <g key={id}><polygon points={vertices} {...strokeProps} />{erasable && <polygon points={vertices} {...hitProps} data-annotation-id={id} />}</g>;
   }
   if (kind === "hexagon") {
-    return <polygon key={id} points={`${left + width * .25},${top} ${left + width * .75},${top} ${left + width},${top + height / 2} ${left + width * .75},${top + height} ${left + width * .25},${top + height} ${left},${top + height / 2}`} {...strokeProps} />;
+    const vertices = `${left + width * .25},${top} ${left + width * .75},${top} ${left + width},${top + height / 2} ${left + width * .75},${top + height} ${left + width * .25},${top + height} ${left},${top + height / 2}`;
+    return <g key={id}><polygon points={vertices} {...strokeProps} />{erasable && <polygon points={vertices} {...hitProps} data-annotation-id={id} />}</g>;
   }
   return null;
 }
@@ -148,11 +152,14 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onMove, o
   const [editing, setEditing] = useState<TextEditor | null>(null);
   const [savingText, setSavingText] = useState(false);
   const [dragging, setDragging] = useState<Dragging | null>(null);
+  const [pendingErases, setPendingErases] = useState<Set<string>>(() => new Set());
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 });
   const svgRef = useRef<SVGSVGElement>(null);
   const editorRef = useRef<HTMLInputElement>(null);
   const savingTextRef = useRef(false);
   const lastDraft = useRef(0);
+  const erasingPointer = useRef<number | null>(null);
+  const erasingIds = useRef(new Set<string>());
   const editorPoint = editing?.point;
 
   useEffect(() => {
@@ -211,9 +218,41 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onMove, o
     } catch { /* Ignore malformed annotations. */ }
   }
 
+  function eraseAt(clientX: number, clientY: number) {
+    const svg = svgRef.current;
+    if (!svg || !canDraw || tool !== "eraser") return;
+    const elements = document.elementsFromPoint(clientX, clientY);
+    if (!elements[0] || !svg.contains(elements[0])) return;
+    const hit = elements.find((element) => svg.contains(element) && element instanceof SVGElement && element.dataset.annotationId);
+    const id = hit instanceof SVGElement ? hit.dataset.annotationId : undefined;
+    if (!id || erasingIds.current.has(id)) return;
+    erasingIds.current.add(id);
+    setPendingErases((previous) => new Set(previous).add(id));
+    const request = onAction?.("erase", id);
+    if (!request) {
+      erasingIds.current.delete(id);
+      setPendingErases((previous) => { const next = new Set(previous); next.delete(id); return next; });
+      return;
+    }
+    void request.then((success) => {
+      if (success) return;
+      erasingIds.current.delete(id);
+      setPendingErases((previous) => { const next = new Set(previous); next.delete(id); return next; });
+    }).catch(() => {
+      erasingIds.current.delete(id);
+      setPendingErases((previous) => { const next = new Set(previous); next.delete(id); return next; });
+    });
+  }
+
   function down(event: ReactPointerEvent<SVGSVGElement>) {
     if (editing) { void commitText(); return; }
-    if (!canDraw || tool === "eraser" || tool === "move" || current || dragging) return;
+    if (!canDraw || tool === "move" || current || dragging || event.button !== 0) return;
+    if (tool === "eraser") {
+      erasingPointer.current = event.pointerId;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      eraseAt(event.clientX, event.clientY);
+      return;
+    }
     const start = point(event);
     if (tool === "text") {
       event.preventDefault();
@@ -231,6 +270,10 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onMove, o
   }
 
   function move(event: ReactPointerEvent<SVGSVGElement>) {
+    if (tool === "eraser") {
+      if (erasingPointer.current === event.pointerId) eraseAt(event.clientX, event.clientY);
+      return;
+    }
     if (dragging && dragging.pointerId === event.pointerId && !dragging.saving) {
       const position = point(event);
       const translated = translateAnnotation(dragging.data, position[0] - dragging.start[0], position[1] - dragging.start[1]);
@@ -248,6 +291,7 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onMove, o
   }
 
   function up(event: ReactPointerEvent<SVGSVGElement>) {
+    if (erasingPointer.current === event.pointerId) { erasingPointer.current = null; return; }
     if (dragging && dragging.pointerId === event.pointerId && !dragging.saving) {
       const position = point(event);
       const translated = translateAnnotation(dragging.data, position[0] - dragging.start[0], position[1] - dragging.start[1]);
@@ -265,22 +309,24 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onMove, o
     if (points.length >= 2) void onAdd?.(current.kind, { color: current.color, strokeWidth: current.strokeWidth, points });
   }
 
-  const selectedPencil = pencilOptions.find((option) => option.id === tool) || pencilOptions[0];
   const selectedShape = shapeOptions.find((option) => option.id === tool) || shapeOptions[0];
-  const PencilIcon = selectedPencil.icon;
   const ShapeIcon = selectedShape.icon;
   const activeColor = colors.find((choice) => choice.value === color)?.label || color;
   const activeClass = "bg-[#6de7d4] text-[#10243a]";
   const inactiveClass = "text-white hover:bg-white/10 hover:text-white";
+  const pencilActive = pencilOptions.some((option) => option.id === tool);
+  const canvasCursor = !canDraw || tool === "move" ? "default" : tool === "pen" ? "url('/cursors/pen.svg') 4 28, crosshair" : tool === "marker" ? "url('/cursors/marker.svg') 4 28, crosshair" : tool === "eraser" ? "url('/cursors/eraser.svg') 7 25, crosshair" : "crosshair";
 
   return <>
-    <svg ref={svgRef} aria-label="Пометки поверх демонстрации" className="absolute inset-0 h-full w-full touch-none" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none" style={{ pointerEvents: canDraw ? "auto" : "none", cursor: canDraw && tool !== "move" ? "crosshair" : "default" }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { if (current) onDraft?.(current.kind, null); setCurrent(null); setDragging(null); }}>
+    <svg ref={svgRef} aria-label="Пометки поверх демонстрации" className="absolute inset-0 h-full w-full touch-none" viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none" style={{ pointerEvents: canDraw ? "auto" : "none", cursor: canvasCursor }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => { if (current) onDraft?.(current.kind, null); erasingPointer.current = null; setCurrent(null); setDragging(null); }}>
       {size.width > 0 && size.height > 0 && <>
         {annotations.map((item) => {
+          if (pendingErases.has(item.id)) return null;
           try {
             const data = dragging?.id === item.id ? translateAnnotation(dragging.data, dragging.delta[0], dragging.delta[1]).payload : JSON.parse(item.payload) as AnnotationPayload;
             const movable = canDraw && tool === "move" && (canClear || item.author_id === memberId);
-            return renderAnnotation(item.id, item.kind, data, size, canDraw && tool === "eraser" ? (id) => void onAction?.("erase", id) : undefined, movable ? startMove : undefined);
+            const erasable = canDraw && tool === "eraser" && (canClear || item.author_id === memberId);
+            return renderAnnotation(item.id, item.kind, data, size, erasable, movable ? startMove : undefined);
           }
           catch { return null; }
         })}
@@ -296,7 +342,10 @@ export function AnnotationLayer({ annotations, canDraw = false, onAdd, onMove, o
       <Button title={toolbarOpen ? "Свернуть инструменты" : "Развернуть инструменты"} aria-label={toolbarOpen ? "Свернуть инструменты" : "Развернуть инструменты"} aria-expanded={toolbarOpen} variant="ghost" size="icon" className={inactiveClass} onClick={() => { setToolbarOpen((open) => !open); setOpenPicker(null); }}>{toolbarOpen ? <ChevronDown size={18} /> : <ChevronUp size={18} />}</Button>
       {toolbarOpen && <>
         <Popover open={openPicker === "pencil"} onOpenChange={(open) => setOpenPicker(open ? "pencil" : null)}>
-          <PopoverTrigger asChild><Button title={selectedPencil.label} aria-label={`Карандаш: ${selectedPencil.label}`} aria-expanded={openPicker === "pencil"} variant={pencilOptions.some((option) => option.id === tool) ? "default" : "ghost"} size="icon" className={pencilOptions.some((option) => option.id === tool) ? activeClass : inactiveClass}><PencilIcon size={18} strokeDasharray={selectedPencil.dashed ? "3 3" : undefined} /></Button></PopoverTrigger>
+          <div className="flex items-center">
+            <Button title="Карандаш" aria-label="Карандаш" aria-pressed={tool === "pen"} variant={tool === "pen" ? "default" : "ghost"} size="icon" className={tool === "pen" ? activeClass : inactiveClass} onClick={() => { setTool("pen"); setOpenPicker(null); }}><Pen size={18} /></Button>
+            <PopoverTrigger asChild><Button title="Варианты карандаша" aria-label="Варианты карандаша" aria-expanded={openPicker === "pencil"} variant={pencilActive && tool !== "pen" ? "default" : "ghost"} size="icon-xs" className={pencilActive && tool !== "pen" ? activeClass : inactiveClass}><ChevronDown size={14} /></Button></PopoverTrigger>
+          </div>
           <PopoverContent side="top" align="start" className="w-56 border-white/15 bg-[#1c2c45] p-1.5 text-white" aria-label="Вид карандаша">
             {pencilOptions.map(({ id, label, icon: Icon, dashed }) => <button key={id} type="button" aria-pressed={tool === id} className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-white/10 ${tool === id ? "bg-white/10" : ""}`} onClick={() => { setTool(id); setOpenPicker(null); }}><Icon size={18} strokeDasharray={dashed ? "3 3" : undefined} />{label}</button>)}
           </PopoverContent>

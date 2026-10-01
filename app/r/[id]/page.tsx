@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import { LiveKitRoom } from "@livekit/components-react";
 import { createLocalVideoTrack, type LocalVideoTrack } from "livekit-client";
 import { ArrowLeft, Camera, CameraOff, Mic, MicOff, Video, Users, ShieldCheck } from "lucide-react";
@@ -116,8 +115,12 @@ export default function RoomPage() {
     <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); router.push("/"); }} onEnded={() => { setJoined(null); setConferenceEnded(true); }} connectionError={error} />
   </LiveKitRoom>;
 
+  // The room can be missing, so leaving this page must bypass client-side routing.
+  // eslint-disable-next-line @next/next/no-html-link-for-pages
+  const homeLink = <a href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</a>;
+
   return <main className="prejoin min-h-screen bg-[#0e192c] text-white">
-    <div className="mx-auto max-w-6xl px-5 py-7"><Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</Link></div>
+    <div className="mx-auto max-w-6xl px-5 py-7">{homeLink}</div>
     <div className="mx-auto grid max-w-6xl gap-9 px-5 pb-14 pt-7 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:gap-16 lg:pt-16">
       <div className="relative aspect-video overflow-hidden rounded-[28px] border border-white/10 bg-[#1c2d46] shadow-2xl">
         {camera ? <video ref={previewRef} autoPlay muted playsInline className="h-full w-full object-cover" /> : <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-400"><span className="grid h-20 w-20 place-items-center rounded-full bg-white/10"><CameraOff size={30} /></span>Камера выключена</div>}

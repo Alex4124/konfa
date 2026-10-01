@@ -381,7 +381,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     return Boolean(await action("annotations", { action: "move", targetId, dx, dy }));
   }
   async function annotationAction(name: "undo" | "clear" | "erase", targetId?: string) {
-    await action("annotations", { action: name, targetId });
+    return Boolean(await action("annotations", { action: name, targetId }));
   }
   async function copyGuestLink() {
     try { await navigator.clipboard.writeText(joined.guestUrl); }
