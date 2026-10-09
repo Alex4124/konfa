@@ -14,8 +14,8 @@ const UI_TOOLS: UiTool[] = [...KINDS, "eraser", "move", "laser", "view"];
 const key = (over: Partial<HotkeyEvent>): HotkeyEvent => ({ code: "", key: "", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, repeat: false, isComposing: false, ...over });
 
 describe("constants", () => {
-  it("keeps the six palette colours, lowercase, with Russian labels; laser red is separate", () => {
-    assert.deepEqual(PALETTE.map((c) => c.value), ["#6de7d4", "#ffcc75", "#ff7794", "#ffffff", "#000000", "#b9a7ff"]);
+  it("keeps the nine palette colours, lowercase, with Russian labels; laser red is separate", () => {
+    assert.deepEqual(PALETTE.map((c) => c.value), ["#6de7d4", "#ffcc75", "#ff7794", "#ffffff", "#000000", "#b9a7ff", "#d92d3a", "#2563eb", "#15803d"]);
     for (const c of PALETTE) assert.match(c.value, /^#[0-9a-f]{6}$/);
     assert.equal(PALETTE[0].label, "Мятный");
     assert.equal(LASER_COLOR, "#ff3b5c");

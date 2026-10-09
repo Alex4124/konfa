@@ -29,9 +29,21 @@ export type DraftPacketV2 = {
   kind: AnnotationKind | "laser"; style?: LaserStyle; color?: string; strokeWidth?: number;
   from?: number; points?: Point[]; moveOf?: string; dx?: number; dy?: number;
 };
-export type Member = { id: string; name: string; role: Role; can_annotate: number; raised_hand: number; removed: number };
+export type Member = { id: string; name: string; role: Role; can_annotate: number; raised_hand: number; removed: number; board_draw?: number };
 export type Message = { id: string; member_id: string; name: string; body: string; created_at: number };
 export type ShareRequest = { id: string; member_id: string; name: string; status: "pending" | "approved" | "active" | "denied" | "cancelled" | "finished"; created_at: number };
+export type DocumentKind = "pdf" | "image" | "office";
+// The current material of the workspace; surface = annotation share id of its current page, token = signed page-image access.
+export type WorkspaceDoc = { id: string; name: string; kind: DocumentKind; pageCount: number; page: number; pages: Array<[number, number]>; surface: string; token: string };
+export type WorkspaceDocument = { id: string; name: string; kind: DocumentKind; pageCount: number; createdAt: number };
+// The teacher's workspace as the server reports it; boardSurface = annotation share id of the current board sheet.
+export type WorkspaceView = {
+  id: string; open: boolean; version: number;
+  boardPage: number; boardPages: number; boardSurface: string;
+  boardCollapsed: boolean; docCollapsed: boolean; allDraw: boolean;
+  doc: WorkspaceDoc | null;
+  documents?: WorkspaceDocument[]; // host only
+};
 export type RoomState = {
   room: { id: string; kind: RoomKind; status: string; activeShareId: string | null; activeShareOwner: string | null; annotationsEnabled: boolean };
   members: Member[];
@@ -39,4 +51,7 @@ export type RoomState = {
   shareRequests: ShareRequest[];
   annotations: Annotation[];
   recording: { status: string; url: string | null } | null;
+  workspace?: WorkspaceView | null;
+  boardAnnotations?: Annotation[]; // rows of workspace.boardSurface
+  docAnnotations?: Annotation[]; // rows of workspace.doc.surface
 };

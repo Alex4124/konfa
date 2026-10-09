@@ -169,9 +169,18 @@ export function createSingleFlight(task: () => Promise<void>, o: { minIntervalMs
 
 const STATE_TIMEOUT_MESSAGE = "Не удалось обновить комнату";
 
-// Single-flight GET /state applied through snapshot tickets; a "stale" snapshot asks for one more run.
-// A request that outlives timeoutMs is aborted and reported, so one stalled fetch never blocks later refreshes.
-export function createStateRefresher(o: { fetchState(signal?: AbortSignal): Promise<RoomState>; sync: SnapshotSink; onState(state: RoomState): void; onError(error: unknown): void; timers: TimerHost; now(): number; minIntervalMs?: number; timeoutMs?: number }): { run(): Promise<void> } {
+// One annotation store fed by the polled state: which surface the state names for it, and that surface's rows.
+export type StateSink = { sink: SnapshotSink; select(state: RoomState): { shareId: string | null; rows: Annotation[] } };
+
+export function shareSnapshot(state: RoomState): { shareId: string | null; rows: Annotation[] } {
+  return { shareId: state.room.activeShareId, rows: Array.isArray(state.annotations) ? state.annotations : [] };
+}
+
+// Single-flight GET /state applied through snapshot tickets (one per sink, all taken before the fetch); a "stale" snapshot
+// asks for one more run. A request that outlives timeoutMs is aborted and reported, so one stalled fetch never blocks later refreshes.
+// `sync` is the screen share's store alone (sinks: [{ sink: sync, select: shareSnapshot }]).
+export function createStateRefresher(o: { fetchState(signal?: AbortSignal): Promise<RoomState>; sync?: SnapshotSink; sinks?: readonly StateSink[]; onState(state: RoomState): void; onError(error: unknown): void; timers: TimerHost; now(): number; minIntervalMs?: number; timeoutMs?: number }): { run(): Promise<void> } {
+  const sinks: readonly StateSink[] = o.sinks ?? (o.sync ? [{ sink: o.sync, select: shareSnapshot }] : []);
   const fetchWithin = () => new Promise<RoomState>((resolve, reject) => {
     const controller = typeof AbortController === "function" ? new AbortController() : undefined;
     const timer = o.timers.setTimeout(() => {
@@ -188,24 +197,33 @@ export function createStateRefresher(o: { fetchState(signal?: AbortSignal): Prom
     request.then((state) => { done(); resolve(state); }, (error: unknown) => { done(); reject(error); });
   });
   const flight = createSingleFlight(async () => {
-    const ticket = o.sync.beginSnapshot();
+    const tickets = sinks.map(({ sink }) => sink.beginSnapshot());
     let state: RoomState;
     try {
       state = await fetchWithin();
     } catch (error) {
-      o.sync.releaseSnapshot(ticket);
+      sinks.forEach(({ sink }, index) => sink.releaseSnapshot(tickets[index]));
       o.onError(error);
       return;
     }
-    let result: string;
+    // A sink that throws does not keep the others (or the rest of the state) from applying.
+    let stale = false, failed = false, cause: unknown = null;
+    sinks.forEach(({ sink, select }, index) => {
+      try {
+        const { shareId, rows } = select(state);
+        if (sink.applySnapshot(tickets[index], shareId, rows) === "stale") stale = true;
+      } catch (error) {
+        sink.releaseSnapshot(tickets[index]);
+        if (!failed) { failed = true; cause = error; }
+      }
+    });
     try {
-      result = o.sync.applySnapshot(ticket, state.room.activeShareId, Array.isArray(state.annotations) ? state.annotations : []);
       o.onState(state);
     } catch (error) {
-      o.onError(error);
-      return;
+      if (!failed) { failed = true; cause = error; }
     }
-    if (result === "stale") void flight.run();
+    if (failed) o.onError(cause);
+    if (stale) void flight.run();
   }, { minIntervalMs: o.minIntervalMs ?? REFRESH_MIN_INTERVAL_MS, now: o.now, timers: o.timers });
   return { run: () => flight.run() };
 }

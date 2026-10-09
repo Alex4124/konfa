@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
+import { docTokenExp } from "@/lib/workspace";
 
 export type RoomKind = "meeting" | "webinar";
 export type Role = "host" | "speaker" | "viewer";
@@ -11,7 +12,7 @@ export type RoomRow = {
 };
 export type MemberRow = {
   id: string; room_id: string; name: string; role: Role;
-  can_annotate: number; raised_hand: number; removed: number; created_at: number;
+  can_annotate: number; raised_hand: number; removed: number; created_at: number; board_draw: number;
 };
 export type RecordingRow = {
   id: string; room_id: string; object_key: string;
@@ -49,6 +50,19 @@ export async function r2ObjectRequest(method: "HEAD" | "GET", objectKey: string,
   const url = `${config.endpoint.replace(/\/$/, "")}/${encodeURIComponent(config.bucket)}/${objectKey.split("/").map(encodeURIComponent).join("/")}`;
   const client = new AwsClient({ service: "s3", region: "auto", accessKeyId: config.accessKey, secretAccessKey: config.secretKey });
   return client.fetch(url, { method, headers: range ? { Range: range } : undefined });
+}
+
+// Uploaded materials (page images); a local bucket on the VPS (wrangler dev --local persists it in .wrangler/state).
+export function files(): R2Bucket {
+  if (!env.FILES) throw new AppError("Хранилище файлов не подключено", 503);
+  return env.FILES;
+}
+
+// The LibreOffice service that turns PowerPoint and Word files into PDF (services/convert).
+export function converterConfig() {
+  const { CONVERTER_URL, CONVERTER_SECRET } = env;
+  if (!CONVERTER_URL || !CONVERTER_SECRET) throw new AppError("Конвертация PowerPoint и Word не настроена — сохраните файл как PDF и загрузите его", 503, "no-converter");
+  return { url: CONVERTER_URL, secret: CONVERTER_SECRET };
 }
 
 export function json(data: unknown, status = 200): Response {
@@ -174,6 +188,19 @@ export async function appToken(roomId: string, memberId: string): Promise<string
 export async function egressToken(roomId: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   return signToken({ aud: "confa-egress", roomId, iat: now, exp: now + 8 * 3600 });
+}
+
+// Page images load as plain <img src>, so their links carry a signed token. Its expiry is windowed: the same token for hours,
+// so it does not change the polled state.
+export async function docToken(roomId: string, docId: string): Promise<string> {
+  return signToken({ aud: "confa-doc", roomId, docId, exp: docTokenExp(Math.floor(Date.now() / 1000)) });
+}
+
+export async function verifyDocToken(token: string, roomId: string, docId: string): Promise<void> {
+  let claims: Record<string, unknown>;
+  try { claims = await verifyToken(token); }
+  catch { throw new AppError("Ссылка на материал устарела", 403); }
+  if (claims.aud !== "confa-doc" || claims.roomId !== roomId || claims.docId !== docId) throw new AppError("Нет доступа к материалу", 403);
 }
 
 export async function recordingShareToken(recordingId: string): Promise<string> {

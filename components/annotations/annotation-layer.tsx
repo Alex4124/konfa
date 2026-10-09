@@ -34,6 +34,9 @@ type Props = {
   toolbar?: { container: HTMLElement | null; layout: ToolbarLayout };
   portalContainer?: HTMLElement | null; // popovers and the dialog (PiP body); undefined = document.body
   showSavedAuthors?: boolean; // overrides prefs.showAuthors
+  toolKey?: string; // the armed tool's key (default: shareId); the workspace's two parts share one
+  hotkeysEnabled?: boolean; // false for a workspace part that is not the active one
+  label?: string; // the svg's accessible name
   onToolChange?: (tool: UiTool) => void;
   onNotice?: (text: string, id: string) => void; // the layer's own notices (PiP: sonner toasts would land in the hidden opener)
 };
@@ -224,9 +227,9 @@ const AuthorChips = memo(function AuthorChips({ store, items, live, box, scale, 
   return <g>{items.map((item) => hiddenIds.has(item.id) || item.id === dragged || item.id === editingId ? null : <MarkChip key={item.id} item={item} box={box} scale={scale} nameOf={store.nameOf} />)}</g>;
 });
 
-export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, toolbar, portalContainer, showSavedAuthors, onToolChange, onNotice }: Props) {
+export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, toolbar, portalContainer, showSavedAuthors, toolKey, hotkeysEnabled = true, label = "Пометки поверх демонстрации", onToolChange, onNotice }: Props) {
   const [prefs, updatePrefs] = useAnnotationPrefs();
-  const [armed, setArmed] = useArmedTool(shareId, defaultToolFor({ armedByDefault, coarse, lastDrawTool: prefs.lastDrawTool }));
+  const [armed, setArmed] = useArmedTool(toolKey ?? shareId, defaultToolFor({ armedByDefault, coarse, lastDrawTool: prefs.lastDrawTool }));
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
   const [editing, setEditing] = useState<TextEditorState | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
@@ -243,8 +246,11 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   const suppressClick = useRef(false); // the pointerdown that saved the open text must not open a new one
   const lastTap = useRef<{ id: string; t: number } | null>(null);
   const actions = sync.actions;
-  const active = canDraw && Boolean(actions);
-  const tool: UiTool = active ? armed : "view";
+  const permitted = canDraw && Boolean(actions);
+  // The store still holds the previous page (its snapshot is on the way): writes would go there, so nothing draws yet.
+  const synced = board.shareId === shareId;
+  const active = permitted && synced;
+  const tool: UiTool = permitted ? armed : "view";
   const drawing = ready && active && tool !== "view" && frame.interaction === "draw";
   const win = svgEl?.ownerDocument.defaultView ?? null;
   const items = board.shareId === shareId ? board.items : EMPTY_ITEMS;
@@ -264,6 +270,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     setEditing(null);
   }
   if (clearOpen && !clearAllowed) setClearOpen(false);
+  if (openPicker && !toolbar?.container) setOpenPicker(null); // the toolbar moved to the other part of the workspace
   // The text being edited was erased by someone else: keep the typing, it becomes a new mark.
   if (editing?.targetId && board.shareId === shareId && !byId.has(editing.targetId)) setEditing({ ...editing, targetId: undefined, original: undefined });
 
@@ -696,7 +703,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   }
 
   async function step(direction: "undo" | "redo") {
-    if (!actions || strokeRef.current) return;
+    if (!actions || !synced || strokeRef.current) return;
     const result = await (direction === "undo" ? actions.undo() : actions.redo());
     if (!result.ok && result.code === "gone") notify("Эту пометку уже удалили", "annotation-gone");
   }
@@ -717,7 +724,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     return true;
   }
 
-  useAnnotationHotkeys({ win, enabled: active && ready, onAction: onHotkey });
+  useAnnotationHotkeys({ win, enabled: active && ready && hotkeysEnabled, onAction: onHotkey });
 
   const onHidden = useEffectEvent(cancelStroke);
   const onArbiterGesture = useEffectEvent(cancelStroke);
@@ -768,14 +775,14 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   // The zoom arbiter took the pointer for a pinch or pan.
   useEffect(() => onGestureStart(() => onArbiterGesture()), [onGestureStart]);
 
-  useEffect(() => { if (!active) onRevoked(); }, [active]);
+  useEffect(() => { if (!permitted) onRevoked(); }, [permitted]);
 
   const cursor = !drawing ? "default" : tool === "laser" ? LASER_CURSOR : tool === "text" ? "text" : tool === "move" ? "grab" : tool === "pen" ? "url('/cursors/pen.svg') 4 28, crosshair" : tool === "marker" ? "url('/cursors/marker.svg') 4 28, crosshair" : tool === "eraser" ? "url('/cursors/eraser.svg') 7 25, crosshair" : "crosshair";
   const editorMounted = active && ready && (editing !== null || tool === "text" || tool === "move");
   // The svg is select-none: a mouse stroke across text marks would select them, and a press on a selection starts a native drag (pointercancel).
 
   return <>
-    <svg ref={setSvgEl} aria-label="Пометки поверх демонстрации" className={`absolute inset-0 h-full w-full select-none ${drawing ? "touch-none" : ""}`} viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none" style={{ pointerEvents: drawing ? "auto" : "none", cursor }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={abandon} onLostPointerCapture={abandon} onPointerLeave={() => { if (live.hoverId()) live.set({ hoverId: null }, win); }} onMouseDown={(event) => { if (editing) event.preventDefault(); }} onClick={click} onDoubleClick={doubleClick}>
+    <svg ref={setSvgEl} aria-label={label} className={`absolute inset-0 h-full w-full select-none ${drawing ? "touch-none" : ""}`} viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none" style={{ pointerEvents: drawing ? "auto" : "none", cursor }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={abandon} onLostPointerCapture={abandon} onPointerLeave={() => { if (live.hoverId()) live.set({ hoverId: null }, win); }} onMouseDown={(event) => { if (editing) event.preventDefault(); }} onClick={click} onDoubleClick={doubleClick}>
       {ready && <>
         <HoverHighlight live={live} byId={byId} box={size} scale={scale} />
         <CommittedLayer store={sync.store} items={items} live={live} box={size} editingId={editingId} />
@@ -787,7 +794,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       </>}
     </svg>
     {editorMounted && <TextEditor editorRef={editorRef} state={editing} box={size} coarse={coarse} scale={scale} onChange={(text) => { if (editing) setEditing({ ...editing, text }); }} onCommit={() => { commitText(); }} onCancel={cancelText} />}
-    {active && toolbar?.container && createPortal(<AnnotationToolbar tool={tool} prefs={prefs} layout={toolbar.layout} coarse={coarse} canModerate={canModerate} markCount={items.length} canUndo={history.canUndo} canRedo={history.canRedo} penOnly={frame.penOnly} boxHeight={size.height} editingText={Boolean(editing)} textStyle={editing ? { color: editing.color, size: nearestTextSize(editing.fontSize) } : null} openPicker={openPicker} portalContainer={portalContainer} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={() => setClearOpen(true)} onFingersDraw={(enabled) => {
+    {permitted && toolbar?.container && createPortal(<AnnotationToolbar tool={tool} prefs={prefs} layout={toolbar.layout} coarse={coarse} canModerate={canModerate} markCount={items.length} canUndo={history.canUndo && synced} canRedo={history.canRedo && synced} penOnly={frame.penOnly} boxHeight={size.height} editingText={Boolean(editing)} textStyle={editing ? { color: editing.color, size: nearestTextSize(editing.fontSize) } : null} openPicker={openPicker} portalContainer={portalContainer} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={() => setClearOpen(true)} onFingersDraw={(enabled) => {
       updatePrefs({ fingersDraw: enabled });
       if (enabled) frame.setPenOnly(false);
     }} />, toolbar.container)}

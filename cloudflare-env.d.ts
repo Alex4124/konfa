@@ -9,5 +9,8 @@ declare namespace Cloudflare {
     R2_S3_SECRET_KEY?: string;
     R2_S3_BUCKET?: string;
     PUBLIC_SITE_URL?: string;
+    FILES?: R2Bucket;
+    CONVERTER_URL?: string;
+    CONVERTER_SECRET?: string;
   }
 }
