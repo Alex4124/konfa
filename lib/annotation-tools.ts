@@ -17,6 +17,10 @@ export const PALETTE: ReadonlyArray<{ readonly value: string; readonly label: st
   { value: "#ffffff", label: "Белый" },
   { value: "#000000", label: "Чёрный" },
   { value: "#b9a7ff", label: "Лавандовый" },
+  // Dark colours for white material pages, where the light ones above are hard to read.
+  { value: "#d92d3a", label: "Красный" },
+  { value: "#2563eb", label: "Синий" },
+  { value: "#15803d", label: "Зелёный" },
 ];
 
 export type LineVariant = "line" | "arrow" | "dashed";

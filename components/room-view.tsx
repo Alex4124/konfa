@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
 import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication, type RemoteParticipant } from "livekit-client";
-import { Copy, Ellipsis, ExternalLink, EyeOff, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, PictureInPicture2, Radio, Smile, Users, Video, VideoOff, X } from "lucide-react";
+import { Copy, Ellipsis, ExternalLink, EyeOff, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, PictureInPicture2, Presentation, Radio, Smile, Users, Video, VideoOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,9 +13,15 @@ import { clusterButton, PresentationArea, type PresentationLayerProps } from "@/
 import { MirrorPlaceholder, PresenterPip, type PipNotice } from "@/components/presenter-pip";
 import { AuthorMarks, DepartedAuthors } from "@/components/annotations/author-marks";
 import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
+import { WorkspaceArea } from "@/components/workspace/workspace-area";
+import type { WorkspaceHostActions, WorkspaceLayerProps } from "@/components/workspace/pane-chrome";
 import { createStableBackgroundProcessor, type StableBackgroundProcessor } from "@/lib/stable-background";
 import { accessLevel, accessRoomFromState, canAnnotate, canModerate, isShareOwner, type AccessMember } from "@/lib/annotation-permissions";
-import { createStateRefresher, useAnnotationSync, windowTimers } from "@/hooks/use-annotation-sync";
+import { createStateRefresher, shareSnapshot, useAnnotationSync, windowTimers } from "@/hooks/use-annotation-sync";
+import { useWorkspace } from "@/hooks/use-workspace";
+import { useMaterialUpload } from "@/hooks/use-material-upload";
+import { acceptsBoard, acceptsDoc, boardContextFromState, canAnnotateBoard, docContextFromState, nextStage, selectBoardSnapshot, selectDocSnapshot, type StageChoice } from "@/lib/workspace";
+import type { SyncNotice } from "@/lib/annotation-client";
 import { resetArmedTool } from "@/hooks/use-annotation-prefs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useVisualViewportReset } from "@/hooks/use-visual-viewport-reset";
@@ -48,7 +54,9 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [error, setError] = useState("");
   const [panel, setPanel] = useState<"chat" | "people" | null>(() => typeof window !== "undefined" && window.matchMedia?.(PHONE_QUERY).matches ? null : "chat");
   const [moreOpen, setMoreOpen] = useState(false);
-  const [expandedShareId, setExpandedShareId] = useState<string | null>(null);
+  const [expandedStage, setExpandedStage] = useState<string | null>(null); // "share:<id>" or "ws:<id>": that stage fills the room (local)
+  // Both a screen share and the workspace: the viewer's own pick, else whichever started last (lib/workspace nextStage).
+  const [stageMemo, setStageMemo] = useState<{ workspaceKey: string | null; shareKey: string | null; latest: StageChoice | null; choice: StageChoice | null }>({ workspaceKey: null, shareKey: null, latest: null, choice: null });
   const [message, setMessage] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [busy, setBusy] = useState("");
@@ -87,7 +95,6 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const activeScreen = state?.room.activeShareId
     ? screens.find((track) => track.participant.identity === state.room.activeShareOwner)
     : undefined;
-  const expanded = Boolean(activeScreen && state?.room.activeShareId === expandedShareId);
   const isSharing = screens.some((track) => track.participant.identity === joined.member.id);
   const myShareRequest = state?.shareRequests.find((item) => item.member_id === joined.member.id);
   const pendingShareRequests = state?.shareRequests.filter((item) => item.status === "pending") || [];
@@ -121,14 +128,27 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       if (notice.code === "forbidden") void refresh();
     },
   });
+  // The workspace's two parts: each follows its own current surface (board sheet, material page) with its own store.
+  const workspaceNotice = (notice: SyncNotice) => {
+    toast(notice.text, { id: notice.code === "forbidden" ? "board-permission" : notice.code });
+    if (notice.code === "forbidden") void refresh();
+  };
+  const boardSync = useAnnotationSync({
+    room, roomId: id, token: joined.sessionToken, self: { id: joined.member.id, name: joined.member.name }, state,
+    requestRefresh: () => void refresh(), onNotice: workspaceNotice, contextOf: boardContextFromState, accepts: acceptsBoard,
+  });
+  const docSync = useAnnotationSync({
+    room, roomId: id, token: joined.sessionToken, self: { id: joined.member.id, name: joined.member.name }, state,
+    requestRefresh: () => void refresh(), onNotice: workspaceNotice, contextOf: docContextFromState, accepts: acceptsDoc,
+  });
   // Marks live in the sync store; RoomView re-renders only when the rest of the state changes.
   const [refresher] = useState(() => {
     let stateKey = "";
     return createStateRefresher({
       fetchState: async (signal) => await api("state", undefined, signal) as unknown as RoomState,
-      sync,
+      sinks: [{ sink: sync, select: shareSnapshot }, { sink: boardSync, select: selectBoardSnapshot }, { sink: docSync, select: selectDocSnapshot }],
       onState: (next) => {
-        const rest = { ...next, annotations: [] };
+        const rest = { ...next, annotations: [], boardAnnotations: [], docAnnotations: [] };
         const key = JSON.stringify(rest);
         if (key === stateKey) return;
         stateKey = key;
@@ -140,6 +160,26 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     });
   });
   const refresh = useCallback(() => refresher.run(), [refresher]);
+
+  const workspace = useWorkspace({ server: state?.workspace, post: (body) => api("workspace", body), refresh, onError: setError });
+  const view = workspace.view;
+  const materials = useMaterialUpload({ roomId: id, token: joined.sessionToken, onUploaded: (docId) => workspace.act({ action: "docSelect", docId }), onError: setError });
+  const workspaceOpen = Boolean(view?.open);
+  const canDrawBoard = workspaceOpen && canAnnotateBoard(self ?? { role, board_draw: 0 }, view);
+  const shareActive = Boolean(activeScreen && state);
+  const workspaceKey = workspaceOpen && view ? view.id : null;
+  const shareKey = shareActive ? activeShareId : null;
+  if (stageMemo.workspaceKey !== workspaceKey || stageMemo.shareKey !== shareKey) {
+    const latest = shareKey && shareKey !== stageMemo.shareKey ? "share" : workspaceKey && workspaceKey !== stageMemo.workspaceKey ? "workspace" : stageMemo.latest;
+    setStageMemo({ workspaceKey, shareKey, latest, choice: null });
+  }
+  const stage = nextStage({ workspaceOpen, shareActive, latest: stageMemo.latest, choice: stageMemo.choice });
+  const chooseStage = (choice: StageChoice) => setStageMemo((memo) => ({ ...memo, choice }));
+  const stageKey = stage === "share" && activeShareId ? `share:${activeShareId}` : stage === "workspace" && view ? `ws:${view.id}` : null;
+  const expanded = Boolean(stageKey && expandedStage === stageKey);
+  const boardPermission = workspaceOpen && role !== "host" ? (canDrawBoard ? "on" : "off") : null;
+  const lastBoardPermission = useRef<"on" | "off" | null>(null);
+  const workspaceId = view?.id ?? null;
 
   useEffect(() => {
     if (!state || state.room.status === "open" || endedRef.current) return;
@@ -165,6 +205,15 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     toast.info(permissionKey === "on" ? "Ведущий разрешил вам рисовать на демонстрации" : "Ведущий отключил вам пометки", { id: "annotation-permission" });
   }, [permissionKey, shareOwner, activeShareId]);
 
+  useEffect(() => {
+    const previous = lastBoardPermission.current;
+    lastBoardPermission.current = boardPermission;
+    if (!previous || !boardPermission || previous === boardPermission) return;
+    // Called to the board or sent back: start over in the default tool (Просмотр for students). External store write, no setState.
+    if (workspaceId) resetArmedTool(`ws:${workspaceId}`);
+    toast.info(boardPermission === "on" ? "Учитель разрешил вам рисовать на доске" : "Учитель отключил вам рисование на доске", { id: "board-permission" });
+  }, [boardPermission, workspaceId]);
+
   // Stopping the share (server state and track both agree) closes the PiP window; its pagehide then clears the hook state.
   useEffect(() => {
     if (pipWindow && !shareOwner && !isSharing) pipWindow.close();
@@ -175,7 +224,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   useEffect(() => {
     if (!expanded) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented) setExpandedShareId(null);
+      if (event.key === "Escape" && !event.defaultPrevented) setExpandedStage(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -448,7 +497,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   function annotationNote(person: RoomState["members"][number]) {
     if (person.role === "host") return "";
     const level = accessLevel(person, access);
-    return level === "allowed" || level === "presenter" ? " · может рисовать" : level === "paused" ? " · пометки на паузе" : "";
+    const share = level === "allowed" || level === "presenter" ? " · может рисовать" : level === "paused" ? " · пометки на паузе" : "";
+    return share + (workspaceOpen && person.board_draw ? " · у доски" : "");
   }
 
   function renderParticipantList() {
@@ -474,6 +524,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
         {role === "host" && person.id !== joined.member.id && <div className="mt-3 flex flex-wrap gap-1.5">
           {joined.kind === "webinar" && <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "role", role: person.role === "viewer" ? "speaker" : "viewer" })}>{person.role === "viewer" ? "На сцену" : "В зрители"}</Button>}
           <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "annotation", enabled: !person.can_annotate })}>{person.can_annotate ? "Запретить пометки" : "Разрешить пометки"}</Button>
+          {view && <Button size="xs" variant="secondary" title={person.board_draw ? "Ученик больше не сможет рисовать на доске и в материалах" : "Ученик сможет рисовать на доске и в материалах"} onClick={() => void action(`members/${person.id}`, { action: "board", enabled: !person.board_draw })}>{person.board_draw ? "Убрать от доски" : "К доске"}</Button>}
           <Button size="xs" variant="secondary" onClick={() => void action(`members/${person.id}`, { action: "mute" })}>Выключить звук</Button>
           <Button size="xs" variant="destructive" onClick={() => { if (confirm(`Удалить участника ${person.name}?`)) void action(`members/${person.id}`, { action: "remove" }); }}>Удалить</Button>
         </div>}
@@ -484,7 +535,11 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
 
   function expandScreen() {
     if (!activeScreen || !state?.room.activeShareId) return;
-    setExpandedShareId(state.room.activeShareId);
+    setExpandedStage(`share:${state.room.activeShareId}`);
+  }
+
+  function toggleWorkspace() {
+    void workspace.act({ action: view?.open ? "close" : "open" }, view ? { open: !view.open } : undefined);
   }
 
   const recordingStatus = state?.recording?.status;
@@ -492,10 +547,27 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   // «Ещё» gathers what the footer hides on narrow phones; in landscape (header hidden) also the guest link and «Закончить конференцию».
   const moreInPortrait = canPublish || Boolean(state?.recording?.url); // hosts publish too
   const layerProps: PresentationLayerProps = { sync, selfId: joined.member.id, canDraw, canModerate: canModerateShare, armedByDefault: role === "host" || shareOwner, coarse };
-  const shareActions = shareOwner ? <>
-    {ownSurface === "monitor" && !mirrorGuard && <Button variant="secondary" size="icon-lg" title="Скрыть демонстрацию" aria-label="Скрыть демонстрацию" className={clusterButton} onClick={() => setSelfPreviewShareId(null)}><EyeOff /></Button>}
-    {pipSupported && <Button variant="secondary" size="icon-lg" title="Окно пометок поверх экрана" aria-label="Окно пометок поверх экрана" aria-pressed={Boolean(pipWindow)} className={`${clusterButton} ${pipWindow ? "!bg-[#317b75]" : ""}`} onClick={togglePip}><PictureInPicture2 /></Button>}
-  </> : null;
+  const shareActions = <>
+    {workspaceOpen && <Button variant="secondary" size="icon-lg" title="Показать доску и материалы" aria-label="Показать доску и материалы" className={clusterButton} onClick={() => chooseStage("workspace")}><Presentation /></Button>}
+    {shareOwner && <>
+      {ownSurface === "monitor" && !mirrorGuard && <Button variant="secondary" size="icon-lg" title="Скрыть демонстрацию" aria-label="Скрыть демонстрацию" className={clusterButton} onClick={() => setSelfPreviewShareId(null)}><EyeOff /></Button>}
+      {pipSupported && <Button variant="secondary" size="icon-lg" title="Окно пометок поверх экрана" aria-label="Окно пометок поверх экрана" aria-pressed={Boolean(pipWindow)} className={`${clusterButton} ${pipWindow ? "!bg-[#317b75]" : ""}`} onClick={togglePip}><PictureInPicture2 /></Button>}
+    </>}
+  </>;
+  const workspaceLabel = !view ? "Создать доску" : view.open ? "Закрыть доску" : "Открыть доску";
+  const boardLayer: WorkspaceLayerProps = { sync: boardSync, selfId: joined.member.id, canDraw: canDrawBoard, canModerate: role === "host", armedByDefault: role === "host", coarse };
+  const docLayer: WorkspaceLayerProps = { ...boardLayer, sync: docSync };
+  const workspaceHost: WorkspaceHostActions | null = role === "host" ? {
+    flip: workspace.flip,
+    addBoardPage: () => void workspace.act({ action: "addBoardPage" }, view ? { boardPages: view.boardPages + 1, boardPage: view.boardPages } : undefined),
+    collapse: (part, collapsed) => void workspace.act({ action: "collapse", part, collapsed }, part === "board" ? { boardCollapsed: collapsed } : { docCollapsed: collapsed }),
+    setAllDraw: (enabled) => void workspace.act({ action: "allDraw", enabled }, { allDraw: enabled }),
+    selectDoc: (docId) => void workspace.act({ action: "docSelect", docId }),
+    closeDoc: () => void workspace.act({ action: "docClose" }),
+    deleteDoc: (docId, name) => { if (window.confirm(`Удалить «${name}»? Пометки на нём тоже пропадут.`)) void workspace.act({ action: "docDelete", docId }); },
+    uploadFile: materials.start,
+    cancelUpload: materials.cancel,
+  } : null;
 
   return <main className={`relative flex h-dvh touch-manipulation flex-col overflow-hidden bg-[#0e192c] text-white short:flex-row ${expanded ? "min-h-0" : "roomy:min-h-[540px]"}`}>
     <RoomAudioRenderer />
@@ -514,8 +586,9 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     {(error || connectionError) && <div role="alert" className={`flex items-center justify-between gap-3 bg-rose-500/90 px-5 py-2 text-sm text-white ${expanded ? "absolute left-1/2 top-14 z-50 w-[min(90vw,560px)] -translate-x-1/2 rounded-xl shadow-2xl" : "short:absolute short:left-1/2 short:top-2 short:z-50 short:w-[min(90vw,560px)] short:-translate-x-1/2 short:rounded-xl short:shadow-2xl"}`}><span>{connectionError || error}</span><button aria-label="Закрыть сообщение" onClick={() => setError("")}><X size={16} /></button></div>}
 
     <div className="relative flex min-h-0 min-w-0 flex-1">
-      <section className={`isolate flex min-w-0 flex-1 flex-col ${activeScreen ? "" : "p-3 sm:p-5"}`}>
-        {activeScreen && state ? <PresentationArea state={state} activeScreen={activeScreen} members={visibleMembers} expanded={expanded} onExpand={expandScreen} onCollapse={() => setExpandedShareId(null)} renderTile={renderParticipantTile} renderParticipantList={renderParticipantList} layerProps={layerProps} toolbarVisible={canDraw} actions={shareActions} placeholder={mirrorGuard && activeShareId ? <MirrorPlaceholder sync={sync} shareId={activeShareId} selfId={joined.member.id} pipSupported={pipSupported} pipOpen={Boolean(pipWindow)} onPip={togglePip} onShow={() => setSelfPreviewShareId(activeShareId)} /> : undefined} /> : <div className="grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
+      <section className={`isolate flex min-w-0 flex-1 flex-col ${stage === "grid" ? "p-3 sm:p-5" : ""}`}>
+        {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={id} isHost={role === "host"} canDraw={canDrawBoard} coarse={coarse} members={visibleMembers} renderTile={renderParticipantTile} board={boardLayer} doc={docLayer} host={workspaceHost} upload={materials.upload} expanded={expanded} onExpand={() => setExpandedStage(`ws:${view.id}`)} onCollapse={() => setExpandedStage(null)} onShowShare={shareActive ? () => chooseStage("share") : undefined} />
+        : stage === "share" && activeScreen && state ? <PresentationArea state={state} activeScreen={activeScreen} members={visibleMembers} expanded={expanded} onExpand={expandScreen} onCollapse={() => setExpandedStage(null)} renderTile={renderParticipantTile} renderParticipantList={renderParticipantList} layerProps={layerProps} toolbarVisible={canDraw} actions={shareActions} placeholder={mirrorGuard && activeShareId ? <MirrorPlaceholder sync={sync} shareId={activeShareId} selfId={joined.member.id} pipSupported={pipSupported} pipOpen={Boolean(pipWindow)} onPip={togglePip} onShow={() => setSelfPreviewShareId(activeShareId)} /> : undefined} /> : <div className="grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
           {visibleMembers.map((person) => renderParticipantTile(person, "grid"))}
         </div>}
       </section>
@@ -561,12 +634,14 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
         <Button variant="secondary" size="icon-lg" title="Поднять или опустить руку" aria-label="Поднять или опустить руку" className={`rounded-full text-white hover:bg-[#3e5673] ${railSize} ${self?.raised_hand ? "bg-amber-500/40" : "bg-[#2d415d]"}`} onClick={() => void action("hand", {})}><Hand /></Button>
         <Button variant="secondary" size="icon-lg" title="Чат" aria-label="Чат" aria-pressed={panel === "chat"} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => setPanel(panel === "chat" ? null : "chat")}><MessageSquare /></Button>
         <Button variant="secondary" size="icon-lg" title={pendingShareRequests.length ? `Участники, запросов на показ: ${pendingShareRequests.length}` : "Участники"} aria-label={pendingShareRequests.length ? `Участники, запросов на показ: ${pendingShareRequests.length}` : "Участники"} aria-pressed={panel === "people"} className={`relative rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => setPanel(panel === "people" ? null : "people")}><Users />{role === "host" && pendingShareRequests.length > 0 && <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[#6de7d4] px-1 text-[11px] font-bold text-[#10243a]">{pendingShareRequests.length}</span>}</Button>
+        {role === "host" && <Button variant="secondary" size="lg" title={workspaceLabel} aria-label={workspaceLabel} aria-pressed={workspaceOpen} className={`h-10 rounded-full text-white hover:bg-[#3e5673] max-sm:hidden max-lg:size-10 max-lg:px-0 short:hidden ${workspaceOpen ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={toggleWorkspace}><Presentation /><span className="max-lg:hidden">{workspaceLabel}</span></Button>}
         {role === "host" && <Button variant="secondary" size="icon-lg" title={recordingStatus === "recording" ? "Остановить запись" : "Начать запись"} aria-label={recordingStatus === "recording" ? "Остановить запись" : "Начать запись"} disabled={busy === "recording" || recordingStatus === "processing"} className={`rounded-full text-white hover:bg-[#3e5673] max-sm:hidden short:hidden ${recordingStatus === "recording" ? "bg-rose-500/40" : "bg-[#2d415d]"}`} onClick={toggleRecording}><Radio /></Button>}
         <Popover open={moreOpen} onOpenChange={setMoreOpen}>
           <PopoverTrigger asChild><Button variant="secondary" size="icon-lg" title="Ещё" aria-label="Ещё" className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize} ${moreInPortrait ? "sm:hidden" : "hidden"} short:inline-flex`}><Ellipsis /></Button></PopoverTrigger>
           <PopoverContent side={isShort ? "left" : "top"} align="end" collisionPadding={8} className="w-64 border-white/15 bg-[#1c2c45] p-1.5 text-white">
             {canPublish && <div className="px-1.5 py-1"><BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} /></div>}
             {shareStatus && <p className="px-3 py-1.5 text-xs text-slate-300">{shareStatus}</p>}
+            {role === "host" && <button type="button" className={`${moreItemClass} sm:hidden short:flex`} onClick={() => { setMoreOpen(false); toggleWorkspace(); }}><Presentation size={16} />{workspaceLabel}</button>}
             {role === "host" && <button type="button" disabled={busy === "recording" || recordingStatus === "processing"} className={moreItemClass} onClick={() => { setMoreOpen(false); toggleRecording(); }}><Radio size={16} />{recordingStatus === "recording" ? "Остановить запись" : recordingStatus === "processing" ? "Готовим запись" : "Начать запись"}</button>}
             {state?.recording?.url && <a href={state.recording.url} target="_blank" rel="noreferrer" className={moreItemClass} onClick={() => setMoreOpen(false)}><ExternalLink size={16} />Открыть запись</a>}
             <button type="button" className={`${moreItemClass} hidden short:flex`} onClick={() => { setMoreOpen(false); void copyGuestLink(); }}><Copy size={16} />Ссылка для гостей</button>

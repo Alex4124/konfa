@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { Annotation, AnnotationOp, AnnotationPayload, DraftPacketV2, Point, RoomState } from "@/lib/confa-types";
 import {
-  createAnnotationClient, createMutationQueue, createSingleFlight, createStateRefresher, errorCodeOf, ERASE_FLUSH_MS, NOTICE_TEXT, REQUEST_TIMEOUT_MS,
+  createAnnotationClient, createMutationQueue, createSingleFlight, createStateRefresher, errorCodeOf, shareSnapshot, ERASE_FLUSH_MS, NOTICE_TEXT, REQUEST_TIMEOUT_MS,
   type AnnotationClient, type SyncNotice, type TransportResponse,
 } from "./annotation-client.ts";
 import { decodeJson, type TimerHost } from "./annotation-drafts.ts";
@@ -849,5 +849,69 @@ describe("createStateRefresher", () => {
     await settle();
     assert.equal(fetches, 3, "a stale snapshot triggers one more fetch");
     assert.equal(tickets.length, 3);
+  });
+
+  it("feeds every sink its own surface through its own ticket", async () => {
+    const clock = fakeClock();
+    const share = createAnnotationStore({ now: clock.now });
+    const board = createAnnotationStore({ now: clock.now });
+    const BOARD = "b:board";
+    const seen: RoomState[] = [];
+    const refresher = createStateRefresher({
+      fetchState: async () => ({ ...state([savedRow(1)]), boardAnnotations: [savedRow(7), savedRow(8)] }),
+      sinks: [
+        { sink: share, select: shareSnapshot },
+        { sink: board, select: (next) => ({ shareId: BOARD, rows: next.boardAnnotations ?? [] }) },
+      ],
+      onState: (next) => seen.push(next), onError: () => {}, timers: clock.host, now: clock.now,
+    });
+    await refresher.run();
+    assert.equal(share.getBoard().shareId, SHARE);
+    assert.deepEqual(share.getBoard().items.map((item) => item.id), [ID(1)]);
+    assert.equal(board.getBoard().shareId, BOARD);
+    assert.deepEqual(board.getBoard().items.map((item) => item.id), [ID(7), ID(8)]);
+    assert.equal(seen.length, 1);
+  });
+
+  it("releases every ticket when the fetch fails; a failing sink keeps the others and the state", async () => {
+    const clock = fakeClock();
+    let released = 0, applied = 0, fetches = 0;
+    const errors: unknown[] = [];
+    const seen: RoomState[] = [];
+    const sink = (fails: boolean) => ({
+      beginSnapshot: () => ({ id: 1, journalIndex: 0 }),
+      releaseSnapshot: () => { released++; },
+      applySnapshot: (): "applied" => { if (fails) throw new Error("broken"); applied++; return "applied"; },
+    });
+    const refresher = createStateRefresher({
+      fetchState: async () => { fetches++; if (fetches === 1) throw new Error("offline"); return state(); },
+      sinks: [{ sink: sink(false), select: shareSnapshot }, { sink: sink(true), select: shareSnapshot }, { sink: sink(false), select: shareSnapshot }],
+      onState: (next) => seen.push(next), onError: (error) => errors.push(error), timers: clock.host, now: clock.now,
+    });
+    await refresher.run();
+    assert.equal(released, 3, "all three tickets released after the failed fetch");
+    clock.advance(250);
+    await refresher.run();
+    assert.equal(applied, 2);
+    assert.equal(released, 4, "only the throwing sink releases its ticket");
+    assert.equal(seen.length, 1);
+    assert.deepEqual(errors.map((error) => (error as Error).message), ["offline", "broken"]);
+  });
+
+  it("one stale sink reruns the refresh for all", async () => {
+    const clock = fakeClock();
+    let fetches = 0, stale = true;
+    const fresh = { beginSnapshot: () => ({ id: 1, journalIndex: 0 }), releaseSnapshot: () => {}, applySnapshot: (): "applied" => "applied" };
+    const lagging = { ...fresh, applySnapshot: (): "applied" | "stale" => { const result = stale ? "stale" : "applied"; stale = false; return result; } };
+    const refresher = createStateRefresher({
+      fetchState: async () => { fetches++; return state(); },
+      sinks: [{ sink: fresh, select: shareSnapshot }, { sink: lagging, select: shareSnapshot }],
+      onState: () => {}, onError: () => {}, timers: clock.host, now: clock.now,
+    });
+    await refresher.run();
+    clock.advance(250);
+    await settle();
+    await settle();
+    assert.equal(fetches, 2);
   });
 });

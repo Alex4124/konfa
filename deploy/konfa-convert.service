@@ -1,0 +1,45 @@
+# PowerPoint/Word -> PDF converter for Конфа materials (services/convert/server.mjs).
+# Install: copy server.mjs to /opt/konfa-convert/, CONVERT_SECRET=... into /etc/konfa-convert.env (mode 600),
+# then this file to /etc/systemd/system/ and `systemctl enable --now konfa-convert`.
+# LibreOffice opens untrusted files here: no network but localhost, no access to the app, its data or its secrets.
+[Unit]
+Description=Konfa: PowerPoint and Word to PDF (LibreOffice)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/node/bin/node /opt/konfa-convert/server.mjs
+EnvironmentFile=/etc/konfa-convert.env
+Environment=HOST=127.0.0.1 PORT=8790
+DynamicUser=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+NoNewPrivileges=yes
+InaccessiblePaths=-/srv/konfa -/etc/konfa -/etc/livekit -/etc/caddy -/root
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# One conversion at a time; the live lesson keeps priority on the single CPU and in memory.
+MemoryHigh=600M
+MemoryMax=750M
+OOMScoreAdjust=1000
+CPUWeight=20
+IOWeight=20
+Nice=10
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

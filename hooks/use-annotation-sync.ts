@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { RoomEvent, type RemoteParticipant, type Room } from "livekit-client";
-import { contextFromState, createAnnotationStore, parseServerOp, type AnnotationStore, type BoardView, type HistoryFlags, type SnapshotSink } from "@/lib/annotation-sync";
+import { contextFromState, createAnnotationStore, parseServerOp, type AnnotationStore, type BoardView, type HistoryFlags, type SnapshotSink, type SyncContext } from "@/lib/annotation-sync";
 import { createAnnotationClient, RESYNC_MIN_INTERVAL_MS, type AnnotationActions, type AnnotationClient, type SyncNotice } from "@/lib/annotation-client";
 import { decodeJson, DRAFT_TOPIC, type DraftView, type TimerHost } from "@/lib/annotation-drafts";
+import { acceptsShare } from "@/lib/workspace";
 import type { RoomState } from "@/lib/confa-types";
 
-export { createStateRefresher } from "@/lib/annotation-client";
+export { createStateRefresher, shareSnapshot, type StateSink } from "@/lib/annotation-client";
 
 export type AnnotationSyncConfig = {
   room: Room;
@@ -17,6 +18,10 @@ export type AnnotationSyncConfig = {
   state: RoomState | null;
   requestRefresh(): void;
   onNotice?(notice: SyncNotice): void;
+  // Which surface and rights this store follows (default: the screen share). A module-level function: it is an effect dependency.
+  contextOf?(state: RoomState | null, selfId: string | null): SyncContext;
+  // The ops and drafts this store takes, by share id prefix (several stores listen to the same room). Fixed while mounted.
+  accepts?(shareId: string): boolean;
 };
 export type AnnotationSync = SnapshotSink & { store: AnnotationStore; actions: AnnotationActions | null };
 
@@ -37,7 +42,8 @@ export const windowTimers: TimerHost = {
 };
 
 export function useAnnotationSync(config: AnnotationSyncConfig): AnnotationSync {
-  const { room, state, self } = config;
+  const { room, state, self, contextOf = contextFromState } = config;
+  const [accepts] = useState(() => config.accepts ?? acceptsShare);
   const selfId = self?.id ?? null;
   const [latest] = useState(() => createLatest(config));
   const [store] = useState(() => createAnnotationStore({ now }));
@@ -69,7 +75,7 @@ export function useAnnotationSync(config: AnnotationSyncConfig): AnnotationSync 
     return () => client.stop();
   }, [client]);
 
-  useEffect(() => { store.setContext(contextFromState(state, selfId)); }, [store, state, selfId]);
+  useEffect(() => { store.setContext(contextOf(state, selfId)); }, [store, state, selfId, contextOf]);
 
   useEffect(() => {
     let lastResync = -Infinity;
@@ -88,13 +94,16 @@ export function useAnnotationSync(config: AnnotationSyncConfig): AnnotationSync 
     };
     const onData = (payload: Uint8Array, participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
       if (topic === DRAFT_TOPIC) {
-        if (participant) store.receiveDraft(participant.identity, participant.name, decodeJson(payload));
+        if (!participant) return;
+        const draft = decodeJson(payload);
+        const shareId = draft && typeof draft === "object" ? (draft as { shareId?: unknown }).shareId : undefined;
+        if (typeof shareId === "string" && accepts(shareId)) store.receiveDraft(participant.identity, participant.name, draft);
         return;
       }
       // Server ops arrive without a participant; a peer cannot forge them once it is known to this client.
       if (topic !== "confa" || participant) return;
       const op = parseServerOp(decodeJson(payload));
-      if (op && store.applyOp(op, "server") === "resync") resync();
+      if (op && accepts(op.shareId) && store.applyOp(op, "server") === "resync") resync();
     };
     const onDisconnected = (participant: RemoteParticipant) => store.dropDraftsOf(participant.identity);
     const onReconnected = () => latest.get().requestRefresh();
@@ -107,7 +116,7 @@ export function useAnnotationSync(config: AnnotationSyncConfig): AnnotationSync 
       room.off(RoomEvent.Reconnected, onReconnected);
       if (resyncTimer !== null) window.clearTimeout(resyncTimer);
     };
-  }, [room, store, latest]);
+  }, [room, store, latest, accepts]);
 
   useEffect(() => {
     const timer = window.setInterval(() => store.sweep(), 500);
