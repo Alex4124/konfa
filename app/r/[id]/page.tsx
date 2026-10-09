@@ -109,7 +109,7 @@ export default function RoomPage() {
     finally { setBusy(false); }
   }
 
-  if (conferenceEnded) return <main className="grid min-h-screen place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => router.push("/")}>На главную</Button></div></main>;
+  if (conferenceEnded) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => router.push("/")}>На главную</Button></div></main>;
 
   if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
     <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); router.push("/"); }} onEnded={() => { setJoined(null); setConferenceEnded(true); }} connectionError={error} />
@@ -119,9 +119,9 @@ export default function RoomPage() {
   // eslint-disable-next-line @next/next/no-html-link-for-pages
   const homeLink = <a href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</a>;
 
-  return <main className="prejoin min-h-screen bg-[#0e192c] text-white">
-    <div className="mx-auto max-w-6xl px-5 py-7">{homeLink}</div>
-    <div className="mx-auto grid max-w-6xl gap-9 px-5 pb-14 pt-7 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:gap-16 lg:pt-16">
+  return <main className="prejoin min-h-dvh bg-[#0e192c] text-white">
+    <div className="mx-auto max-w-6xl px-5 py-4 sm:py-7">{homeLink}</div>
+    <div className="mx-auto grid max-w-6xl gap-9 px-5 pb-14 pt-2 sm:pt-7 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:gap-16 lg:pt-16">
       <div className="relative aspect-video overflow-hidden rounded-[28px] border border-white/10 bg-[#1c2d46] shadow-2xl">
         {camera ? <video ref={previewRef} autoPlay muted playsInline className="h-full w-full object-cover" /> : <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-400"><span className="grid h-20 w-20 place-items-center rounded-full bg-white/10"><CameraOff size={30} /></span>Камера выключена</div>}
         <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-3">

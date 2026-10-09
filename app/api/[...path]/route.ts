@@ -2,14 +2,31 @@ import {
   AppError, appToken, authorize, authorizeState, broadcast, db, egressToken,
   errorResponse, grants, joinToken, json, livekitRequest, mediaConfig,
   r2ObjectRequest, randomSecret, readJson, recordingConfig, recordingShareToken, requiredString, requireHost,
-  roomById, sha256, verifyToken, type MemberRow, type RecordingRow, type RoomKind,
+  roomById, sha256, verifyToken, type MemberRow, type RecordingRow, type Role, type RoomKind, type RoomRow,
 } from "@/lib/confa-server";
 import { translateAnnotation } from "@/lib/annotation-geometry";
-import type { AnnotationPayload } from "@/lib/confa-types";
+import {
+  accessRoomFromRow, canAnnotate, canAnnotateAfterRoleChange, canChangeAnnotation, canModerate, defaultCanAnnotate, type AccessRoom,
+} from "@/lib/annotation-permissions";
+import { isAnnotationKind, validateAnnotationPayload, validatePatch } from "@/lib/annotation-validate";
+import {
+  ADD_RATE_MAX, ADD_RATE_WINDOW_MS, ANNOTATION_CAP, ANNOTATION_READ_LIMIT,
+  chunk, fitAnnotationOp, idList, parseUuid, placeholders,
+} from "@/lib/annotation-wire";
+import type { Annotation, AnnotationKind, AnnotationOp, AnnotationPayload } from "@/lib/confa-types";
 
 export const runtime = "edge";
 
+// Clients apply annotation ops directly; pre-op tabs catch up through their 3 s poll. Set to true to also send state-changed.
+const LEGACY_ANNOTATION_REFRESH = false;
+
 type ShareRequestRow = { id: string; room_id: string; member_id: string; status: string; created_at: number; updated_at: number };
+type StoredAnnotation = Annotation & { room_id: string; share_id: string; deleted: number };
+type OpBody<T = AnnotationOp> = T extends unknown ? Omit<T, "type" | "v" | "shareId" | "by"> : never;
+type AnnotationScope = { roomId: string; shareId: string; member: MemberRow; access: AccessRoom; moderator: boolean };
+
+const ROW_COLUMNS = "a.rowid AS seq, a.id, a.author_id, COALESCE(m.name, '') AS author_name, a.kind, a.payload, a.created_at";
+const ROW_SOURCE = "FROM annotations a LEFT JOIN members m ON m.id = a.author_id";
 
 async function connectedParticipant(roomId: string, memberId: string): Promise<boolean> {
   const list = await livekitRequest<{ participants?: Array<{ identity: string }> }>("RoomService", "ListParticipants", { room: roomId }, roomId);
@@ -53,7 +70,7 @@ async function roomState(request: Request, id: string): Promise<Response> {
         ? database.prepare("SELECT s.id, s.member_id, m.name, s.status, s.created_at FROM share_requests s JOIN members m ON m.id = s.member_id WHERE s.room_id = ? AND s.member_id = ?").bind(id, actor.id).all()
         : Promise.resolve({ results: [] }),
     room.active_share_id
-      ? database.prepare("SELECT id, author_id, kind, payload, created_at FROM annotations WHERE room_id = ? AND share_id = ? AND deleted = 0 ORDER BY created_at ASC LIMIT 500").bind(id, room.active_share_id).all()
+      ? database.prepare(`SELECT * FROM (SELECT ${ROW_COLUMNS} ${ROW_SOURCE} WHERE a.room_id = ? AND a.share_id = ? AND a.deleted = 0 ORDER BY a.rowid DESC LIMIT ${ANNOTATION_READ_LIMIT}) ORDER BY seq ASC`).bind(id, room.active_share_id).all()
       : Promise.resolve({ results: [] }),
     room.recording_id
       ? database.prepare("SELECT * FROM recordings WHERE id = ?").bind(room.recording_id).first<RecordingRow>()
@@ -155,7 +172,7 @@ async function post(request: Request): Promise<Response> {
   if (path.length === 3 && path[2] === "hand") return raiseHand(id, member);
   if (path.length === 3 && path[2] === "share") return updateShare(request, id, member);
   if (path.length === 3 && path[2] === "share-requests") return updateShareRequest(request, id, member);
-  if (path.length === 3 && path[2] === "annotations") return updateAnnotations(request, id, member);
+  if (path.length === 3 && path[2] === "annotations") return updateAnnotations(request, id, member, room);
   if (path.length === 3 && path[2] === "recording") return updateRecording(request, id, member);
   if (path.length === 3 && path[2] === "end") return endRoom(id, member);
   if (path.length === 4 && path[2] === "members") return updateMember(request, id, path[3], member);
@@ -205,11 +222,12 @@ async function joinRoom(request: Request, id: string): Promise<Response> {
     } catch { /* New session */ }
   }
   if (!member) {
-    const role = isHost ? "host" : room.kind === "meeting" ? "speaker" : "viewer";
+    const role: Role = isHost ? "host" : room.kind === "meeting" ? "speaker" : "viewer";
     const memberId = crypto.randomUUID();
     const now = Date.now();
-    await db().prepare("INSERT INTO members (id, room_id, name, role, can_annotate, raised_hand, removed, created_at) VALUES (?, ?, ?, ?, 1, 0, 0, ?)").bind(memberId, id, name, role, now).run();
-    member = { id: memberId, room_id: id, name, role, can_annotate: 1, raised_hand: 0, removed: 0, created_at: now };
+    const canAnnotateFlag = defaultCanAnnotate(room.kind, role) ? 1 : 0;
+    await db().prepare("INSERT INTO members (id, room_id, name, role, can_annotate, raised_hand, removed, created_at) VALUES (?, ?, ?, ?, ?, 0, 0, ?)").bind(memberId, id, name, role, canAnnotateFlag, now).run();
+    member = { id: memberId, room_id: id, name, role, can_annotate: canAnnotateFlag, raised_hand: 0, removed: 0, created_at: now };
   } else {
     if (member.role === "speaker") await revokeScreenPermission(id, member);
     await db().prepare("UPDATE share_requests SET status = 'cancelled', updated_at = ? WHERE member_id = ? AND status IN ('pending', 'approved', 'active')").bind(Date.now(), member.id).run();
@@ -360,27 +378,37 @@ async function updateShare(request: Request, id: string, member: MemberRow): Pro
   throw new AppError("Неизвестное действие");
 }
 
-function validPoint(value: unknown): value is [number, number] {
-  return Array.isArray(value) && value.length === 2 && value.every((item) => typeof item === "number" && Number.isFinite(item) && item >= 0 && item <= 1);
+function invalid(message = "Некорректная пометка"): AppError {
+  return new AppError(message, 400, "invalid");
 }
 
-function validateAnnotation(kind: string, payload: unknown): string {
-  if (!["pen", "line", "arrow", "dashed", "marker", "rect", "circle", "triangle", "hexagon", "text"].includes(kind) || !payload || typeof payload !== "object") throw new AppError("Некорректная пометка");
-  const data = payload as Record<string, unknown>;
-  if (typeof data.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(data.color)) throw new AppError("Некорректный цвет");
-  if (kind === "text") {
-    if (!validPoint(data.point) || typeof data.text !== "string" || !data.text.trim() || data.text.length > 140) throw new AppError("Некорректный текст");
-  } else {
-    const maxPoints = kind === "pen" || kind === "marker" ? 200 : 2;
-    if (!Array.isArray(data.points) || data.points.length < 2 || data.points.length > maxPoints || !data.points.every(validPoint)) throw new AppError("Некорректные координаты");
-    if (data.strokeWidth !== undefined && (!Number.isInteger(data.strokeWidth) || (data.strokeWidth as number) < 1 || (data.strokeWidth as number) > 24)) throw new AppError("Некорректная толщина");
-  }
-  const encoded = JSON.stringify(data);
-  if (encoded.length > 8000) throw new AppError("Пометка слишком большая");
-  return encoded;
+function publicRow(row: Annotation): Annotation {
+  return { id: row.id, author_id: row.author_id, author_name: row.author_name, kind: row.kind, payload: row.payload, created_at: row.created_at, seq: row.seq };
 }
 
-async function updateAnnotations(request: Request, id: string, member: MemberRow): Promise<Response> {
+function storedPayload(row: Annotation): AnnotationPayload {
+  try {
+    const payload: unknown = JSON.parse(row.payload);
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) return payload as AnnotationPayload;
+  } catch { /* Reported below. */ }
+  throw invalid();
+}
+
+function rowsOf<T>(result: D1Result<unknown> | undefined): T[] {
+  return (result?.results ?? []) as T[];
+}
+
+async function broadcastAnnotationOp(roomId: string, op: AnnotationOp): Promise<void> {
+  // Awaited on purpose: one author's sequential writes reach every client in commit order.
+  await broadcast(roomId, fitAnnotationOp(op));
+  if (LEGACY_ANNOTATION_REFRESH) await broadcast(roomId, { type: "state-changed" });
+}
+
+function publishOp(scope: AnnotationScope, body: OpBody): Promise<void> {
+  return broadcastAnnotationOp(scope.roomId, { type: "annotations", v: 1, shareId: scope.shareId, by: scope.member.id, ...body });
+}
+
+async function updateAnnotations(request: Request, id: string, member: MemberRow, room: RoomRow): Promise<Response> {
   const input = await readJson(request);
   if (input.action === "setAccess") {
     requireHost(member);
@@ -389,53 +417,198 @@ async function updateAnnotations(request: Request, id: string, member: MemberRow
     await broadcast(id, { type: "state-changed" });
     return json({ annotationsEnabled: input.enabled });
   }
-  const room = await roomById(id);
-  if (member.role !== "host" && (!room.annotations_enabled || !member.can_annotate)) throw new AppError("Ведущий запретил делать пометки", 403);
-  if (!room.active_share_id) throw new AppError("Сейчас никто не показывает экран", 409);
-  const database = db();
-  if (input.action === "add") {
-    const kind = requiredString(input.kind, "тип пометки", 20);
-    const payload = validateAnnotation(kind, input.payload);
-    const annotation = { id: crypto.randomUUID(), author_id: member.id, kind, payload, created_at: Date.now() };
-    await database.prepare("INSERT INTO annotations (id, room_id, share_id, author_id, kind, payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(annotation.id, id, room.active_share_id, member.id, kind, payload, annotation.created_at).run();
-    await broadcast(id, { type: "state-changed" });
-    return json(annotation, 201);
-  }
-  if (input.action === "move") {
-    const targetId = requiredString(input.targetId, "пометку", 100);
-    if (typeof input.dx !== "number" || typeof input.dy !== "number" || !Number.isFinite(input.dx) || !Number.isFinite(input.dy) || Math.abs(input.dx) > 1 || Math.abs(input.dy) > 1) throw new AppError("Некорректное смещение");
-    const target = await database.prepare("SELECT author_id, kind, payload FROM annotations WHERE id = ? AND room_id = ? AND share_id = ? AND deleted = 0").bind(targetId, id, room.active_share_id).first<{ author_id: string; kind: string; payload: string }>();
-    if (!target) throw new AppError("Пометка не найдена", 404);
-    if (member.role !== "host" && target.author_id !== member.id) throw new AppError("Можно перемещать только свои пометки", 403);
-    const original = JSON.parse(target.payload) as AnnotationPayload;
-    const moved = translateAnnotation(original, input.dx, input.dy);
-    const payload = validateAnnotation(target.kind, moved.payload);
-    await database.prepare("UPDATE annotations SET payload = ? WHERE id = ? AND room_id = ? AND share_id = ? AND deleted = 0").bind(payload, targetId, id, room.active_share_id).run();
-    await broadcast(id, { type: "state-changed" });
-    return json({ id: targetId, payload });
-  }
-  if (input.action === "undo") {
-    const last = await database.prepare("SELECT id FROM annotations WHERE room_id = ? AND share_id = ? AND author_id = ? AND deleted = 0 ORDER BY created_at DESC LIMIT 1").bind(id, room.active_share_id, member.id).first<{ id: string }>();
-    if (last) await database.prepare("UPDATE annotations SET deleted = 1 WHERE id = ?").bind(last.id).run();
-    await broadcast(id, { type: "state-changed" });
-    return json({ deletedId: last?.id || null });
-  }
-  if (input.action === "erase") {
-    const targetId = requiredString(input.targetId, "пометку", 100);
-    const target = await database.prepare("SELECT author_id FROM annotations WHERE id = ? AND room_id = ? AND share_id = ? AND deleted = 0").bind(targetId, id, room.active_share_id).first<{ author_id: string }>();
-    if (!target) throw new AppError("Пометка не найдена", 404);
-    if (member.role !== "host" && target.author_id !== member.id) throw new AppError("Можно стереть только свою пометку", 403);
-    await database.prepare("UPDATE annotations SET deleted = 1 WHERE id = ?").bind(targetId).run();
-    await broadcast(id, { type: "state-changed" });
-    return json({ deletedId: targetId });
-  }
-  if (input.action === "clear") {
-    requireHost(member);
-    await database.prepare("UPDATE annotations SET deleted = 1 WHERE room_id = ? AND share_id = ?").bind(id, room.active_share_id).run();
-    await broadcast(id, { type: "state-changed" });
-    return json({ cleared: true });
-  }
+  const shareId = room.active_share_id;
+  if (!shareId) throw new AppError("Сейчас никто не показывает экран", 409, "no-share");
+  // Old tabs send no shareId; new clients pin every write to the share they drew on.
+  if (input.shareId !== undefined && input.shareId !== shareId) throw new AppError("Демонстрация сменилась", 409, "share-changed");
+  const access = accessRoomFromRow(room);
+  if (!canAnnotate(member, access)) throw new AppError("Ведущий не разрешил вам делать пометки", 403, "forbidden");
+  const scope: AnnotationScope = { roomId: id, shareId, member, access, moderator: canModerate(member, access) };
+  if (input.action === "add") return addAnnotation(scope, input);
+  if (input.action === "move") return moveAnnotation(scope, input);
+  if (input.action === "edit") return editAnnotation(scope, input);
+  if (input.action === "erase") return eraseAnnotations(scope, input);
+  if (input.action === "restore") return restoreAnnotations(scope, input);
+  if (input.action === "clear") return clearAnnotations(scope);
+  if (input.action === "clearAuthor") return clearAuthorAnnotations(scope, input);
+  if (input.action === "undo") return undoLastAnnotation(scope);
   throw new AppError("Неизвестное действие");
+}
+
+async function addAnnotation(scope: AnnotationScope, input: Record<string, unknown>): Promise<Response> {
+  const { kind } = input;
+  if (!isAnnotationKind(kind)) throw invalid();
+  const checked = validateAnnotationPayload(kind, input.payload);
+  if ("error" in checked) throw invalid(checked.error);
+  // Old tabs send no id; new clients send their own UUID so a retried add is idempotent.
+  const rowId = input.id === undefined || input.id === null ? crypto.randomUUID() : parseUuid(input.id);
+  if (!rowId) throw invalid();
+  return insertAnnotation(scope, kind, checked.encoded, rowId, true);
+}
+
+// Draft packets publish a stroke's id before its add commits, so another member may claim that id first. The author's row then
+// takes an id derived from the requested one with the server secret: others cannot guess it, and the author's retries map to it.
+async function fallbackAnnotationId(memberId: string, requested: string): Promise<string> {
+  const hash = await sha256(`annotation:${memberId}:${requested}:${mediaConfig().secret}`);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
+}
+
+async function insertAnnotation(scope: AnnotationScope, kind: AnnotationKind, payload: string, rowId: string, mayRekey: boolean): Promise<Response> {
+  const { roomId, shareId, member } = scope;
+  const database = db();
+  const now = Date.now();
+  const inserted = await database.prepare("INSERT INTO annotations (id, room_id, share_id, author_id, kind, payload, deleted, created_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, 0, ?7 WHERE (SELECT COUNT(*) FROM annotations WHERE room_id = ?2 AND share_id = ?3 AND deleted = 0) < ?8 AND (SELECT COUNT(*) FROM annotations WHERE room_id = ?2 AND share_id = ?3 AND author_id = ?4 AND created_at > ?9) < ?10 ON CONFLICT(id) DO NOTHING")
+    .bind(rowId, roomId, shareId, member.id, kind, payload, now, ANNOTATION_CAP, now - ADD_RATE_WINDOW_MS, ADD_RATE_MAX).run();
+  if (inserted.meta.changes) {
+    const row: Annotation = { id: rowId, author_id: member.id, author_name: member.name, kind, payload, created_at: now, seq: inserted.meta.last_row_id };
+    await publishOp(scope, { op: "add", rows: [row] });
+    return json({ row }, 201);
+  }
+  const [existing, counts] = await database.batch([
+    database.prepare(`SELECT ${ROW_COLUMNS}, a.room_id, a.share_id, a.deleted ${ROW_SOURCE} WHERE a.id = ?`).bind(rowId),
+    database.prepare("SELECT (SELECT COUNT(*) FROM annotations WHERE room_id = ?1 AND share_id = ?2 AND deleted = 0) AS live, (SELECT COUNT(*) FROM annotations WHERE room_id = ?1 AND share_id = ?2 AND author_id = ?3 AND created_at > ?4) AS recent").bind(roomId, shareId, member.id, now - ADD_RATE_WINDOW_MS),
+  ]);
+  const stored = rowsOf<StoredAnnotation>(existing)[0];
+  if (stored) {
+    const foreign = stored.room_id !== roomId || stored.share_id !== shareId || stored.author_id !== member.id;
+    if (foreign && mayRekey) return insertAnnotation(scope, kind, payload, await fallbackAnnotationId(member.id, rowId), false);
+    if (foreign || stored.kind !== kind) throw new AppError("Не удалось сохранить пометку — попробуйте ещё раз", 409, "conflict");
+    if (stored.deleted) throw new AppError("Пометку уже удалили", 410, "gone");
+    return json({ row: publicRow(stored) });
+  }
+  const { live = 0, recent = 0 } = rowsOf<{ live: number; recent: number }>(counts)[0] ?? {};
+  if (live >= ANNOTATION_CAP) throw new AppError(`На экране уже ${ANNOTATION_CAP} пометок — очистите доску`, 409, "cap");
+  if (recent >= ADD_RATE_MAX) throw new AppError("Слишком много пометок подряд — подождите пару секунд", 429, "rate");
+  throw new AppError("Не удалось сохранить пометку — попробуйте ещё раз", 503, "retry");
+}
+
+async function changeableAnnotation(scope: AnnotationScope, targetId: unknown, denied: string): Promise<Annotation> {
+  const id = parseUuid(targetId);
+  if (!id) throw invalid("Укажите пометку");
+  const target = await db().prepare(`SELECT ${ROW_COLUMNS} ${ROW_SOURCE} WHERE a.id = ? AND a.room_id = ? AND a.share_id = ? AND a.deleted = 0`).bind(id, scope.roomId, scope.shareId).first<Annotation>();
+  if (!target) throw new AppError("Пометка не найдена", 404, "gone");
+  if (!canChangeAnnotation(scope.member, scope.access, target.author_id)) throw new AppError(denied, 403, "forbidden");
+  return target;
+}
+
+// Compare-and-set on the payload that was read, so concurrent moves and edits never overwrite each other silently.
+async function replacePayload(scope: AnnotationScope, target: Annotation, payload: string): Promise<Annotation> {
+  const database = db();
+  const updated = await database.prepare("UPDATE annotations SET payload = ? WHERE id = ? AND room_id = ? AND share_id = ? AND deleted = 0 AND payload = ?").bind(payload, target.id, scope.roomId, scope.shareId, target.payload).run();
+  if (!updated.meta.changes) {
+    const deleted = await database.prepare("SELECT deleted FROM annotations WHERE id = ? AND room_id = ? AND share_id = ?").bind(target.id, scope.roomId, scope.shareId).first<number>("deleted");
+    if (deleted === null || deleted) throw new AppError("Пометка не найдена", 404, "gone");
+    throw new AppError("Пометку только что изменили — попробуйте ещё раз", 409, "conflict");
+  }
+  return { ...publicRow(target), payload };
+}
+
+async function moveAnnotation(scope: AnnotationScope, input: Record<string, unknown>): Promise<Response> {
+  const { dx, dy } = input;
+  if (typeof dx !== "number" || typeof dy !== "number" || !Number.isFinite(dx) || !Number.isFinite(dy) || Math.abs(dx) > 1 || Math.abs(dy) > 1) throw invalid("Некорректное смещение");
+  const target = await changeableAnnotation(scope, input.targetId, "Можно перемещать только свои пометки");
+  let moved: ReturnType<typeof translateAnnotation>;
+  try { moved = translateAnnotation(storedPayload(target), dx, dy); }
+  catch { throw invalid(); }
+  const checked = validateAnnotationPayload(target.kind, moved.payload);
+  if ("error" in checked) throw invalid(checked.error);
+  const row = await replacePayload(scope, target, checked.encoded);
+  await publishOp(scope, { op: "move", rows: [row] });
+  return json({ row, dx: moved.dx, dy: moved.dy });
+}
+
+async function editAnnotation(scope: AnnotationScope, input: Record<string, unknown>): Promise<Response> {
+  const target = await changeableAnnotation(scope, input.targetId, "Можно изменять только свои пометки");
+  const checked = validatePatch(target.kind, storedPayload(target), input.patch);
+  if ("error" in checked) throw invalid(checked.error);
+  const row = await replacePayload(scope, target, checked.encoded);
+  await publishOp(scope, { op: "edit", rows: [row] });
+  return json({ row });
+}
+
+// Idempotent: ids that are already gone (or, for non-moderators, belong to others) are skipped, never 404.
+// alreadyDeletedIds lists the skipped ids the caller could have erased, so a retry whose first attempt committed still succeeds.
+async function eraseAnnotations(scope: AnnotationScope, input: Record<string, unknown>): Promise<Response> {
+  const ids = idList(input.targetIds !== undefined ? input.targetIds : [input.targetId]);
+  if (!ids) throw invalid("Укажите пометку");
+  const database = db();
+  const own = scope.moderator ? [] : [scope.member.id];
+  const statements = chunk(ids).flatMap((part) => {
+    const where = `room_id = ? AND share_id = ? AND id IN (${placeholders(part.length)})${own.length ? " AND author_id = ?" : ""}`;
+    const values = [scope.roomId, scope.shareId, ...part, ...own];
+    return [database.prepare(`SELECT id, deleted FROM annotations WHERE ${where}`).bind(...values), database.prepare(`UPDATE annotations SET deleted = 1 WHERE ${where} AND deleted = 0`).bind(...values)];
+  });
+  const results = await database.batch(statements);
+  const found = results.filter((_, index) => index % 2 === 0).flatMap((result) => rowsOf<{ id: string; deleted: number }>(result));
+  const deletedIds = found.filter((row) => !row.deleted).map((row) => row.id);
+  const alreadyDeletedIds = found.filter((row) => row.deleted).map((row) => row.id);
+  if (deletedIds.length) await publishOp(scope, { op: "erase", ids: deletedIds });
+  return json({ deletedIds, alreadyDeletedIds });
+}
+
+async function restoreAnnotations(scope: AnnotationScope, input: Record<string, unknown>): Promise<Response> {
+  const ids = idList(input.targetIds);
+  if (!ids) throw invalid("Укажите пометку");
+  const database = db();
+  const { roomId, shareId } = scope;
+  const own = scope.moderator ? [] : [scope.member.id];
+  const parts = chunk(ids);
+  // The cap subquery is evaluated once per statement, so a restore may overshoot the cap by less than one chunk.
+  const updates = parts.map((part) => database.prepare(`UPDATE annotations SET deleted = 0 WHERE room_id = ? AND share_id = ? AND deleted = 1 AND id IN (${placeholders(part.length)})${own.length ? " AND author_id = ?" : ""} AND (SELECT COUNT(*) FROM annotations WHERE room_id = ? AND share_id = ? AND deleted = 0) < ?`)
+    .bind(roomId, shareId, ...part, ...own, roomId, shareId, ANNOTATION_CAP));
+  const selects = parts.map((part) => database.prepare(`SELECT ${ROW_COLUMNS} ${ROW_SOURCE} WHERE a.room_id = ? AND a.share_id = ? AND a.deleted = 0 AND a.id IN (${placeholders(part.length)})${own.length ? " AND a.author_id = ?" : ""}`)
+    .bind(roomId, shareId, ...part, ...own));
+  const results = await database.batch([...updates, ...selects]);
+  const restored = results.slice(0, updates.length).reduce((sum, result) => sum + (result.meta.changes || 0), 0);
+  const rows = results.slice(updates.length).flatMap((result) => rowsOf<Annotation>(result)).map(publicRow).sort((a, b) => a.seq - b.seq);
+  if (restored) await publishOp(scope, { op: "restore", rows });
+  else if (!rows.length) {
+    const live = await database.prepare("SELECT COUNT(*) AS live FROM annotations WHERE room_id = ? AND share_id = ? AND deleted = 0").bind(roomId, shareId).first<number>("live");
+    if ((live ?? 0) >= ANNOTATION_CAP) throw new AppError(`На экране уже ${ANNOTATION_CAP} пометок — очистите доску`, 409, "cap");
+  }
+  return json({ rows });
+}
+
+async function clearAnnotations(scope: AnnotationScope): Promise<Response> {
+  if (!scope.moderator) throw new AppError("Очистить пометки может ведущий или докладчик", 403, "forbidden");
+  const database = db();
+  const [selected] = await database.batch([
+    database.prepare("SELECT id, rowid AS seq FROM annotations WHERE room_id = ? AND share_id = ? AND deleted = 0 ORDER BY rowid ASC").bind(scope.roomId, scope.shareId),
+    database.prepare("UPDATE annotations SET deleted = 1 WHERE room_id = ? AND share_id = ? AND deleted = 0").bind(scope.roomId, scope.shareId),
+  ]);
+  const cleared = rowsOf<{ id: string; seq: number }>(selected);
+  const upToSeq = cleared.reduce((max, row) => Math.max(max, row.seq), 0);
+  if (cleared.length) await publishOp(scope, { op: "clear", upToSeq });
+  return json({ cleared: true, clearedIds: cleared.map((row) => row.id), upToSeq });
+}
+
+// A moderator's "erase everything by this author": broadcast as a plain erase so clients never over-delete.
+async function clearAuthorAnnotations(scope: AnnotationScope, input: Record<string, unknown>): Promise<Response> {
+  if (!scope.moderator) throw new AppError("Стирать чужие пометки может ведущий или докладчик", 403, "forbidden");
+  const authorId = parseUuid(input.targetId);
+  if (!authorId) throw invalid("Укажите участника");
+  const database = db();
+  const where = "room_id = ? AND share_id = ? AND author_id = ? AND deleted = 0";
+  const [selected] = await database.batch([
+    database.prepare(`SELECT id FROM annotations WHERE ${where} ORDER BY rowid ASC`).bind(scope.roomId, scope.shareId, authorId),
+    database.prepare(`UPDATE annotations SET deleted = 1 WHERE ${where}`).bind(scope.roomId, scope.shareId, authorId),
+  ]);
+  const deletedIds = rowsOf<{ id: string }>(selected).map((row) => row.id);
+  if (deletedIds.length) await publishOp(scope, { op: "erase", ids: deletedIds });
+  return json({ deletedIds });
+}
+
+// Legacy action for tabs opened before client-side history existed.
+async function undoLastAnnotation(scope: AnnotationScope): Promise<Response> {
+  const database = db();
+  const last = "SELECT id FROM annotations WHERE room_id = ? AND share_id = ? AND author_id = ? AND deleted = 0 ORDER BY rowid DESC LIMIT 1";
+  const [selected] = await database.batch([
+    database.prepare(last).bind(scope.roomId, scope.shareId, scope.member.id),
+    database.prepare(`UPDATE annotations SET deleted = 1 WHERE id = (${last})`).bind(scope.roomId, scope.shareId, scope.member.id),
+  ]);
+  const deletedId = rowsOf<{ id: string }>(selected)[0]?.id ?? null;
+  if (deletedId) await publishOp(scope, { op: "erase", ids: [deletedId] });
+  return json({ deletedId });
 }
 
 async function updateMember(request: Request, id: string, targetId: string, actor: MemberRow): Promise<Response> {
@@ -448,13 +621,16 @@ async function updateMember(request: Request, id: string, targetId: string, acto
     if (input.role !== "speaker" && input.role !== "viewer") throw new AppError("Некорректная роль");
     if (input.role === "viewer") await revokeScreenPermission(id, { ...target, role: "viewer" });
     else await setScreenPermission(id, { ...target, role: "speaker" }, false);
-    await db().prepare("UPDATE members SET role = ?, raised_hand = 0 WHERE id = ?").bind(input.role, targetId).run();
+    const canAnnotateFlag = canAnnotateAfterRoleChange(input.role) ? 1 : 0;
+    await db().prepare("UPDATE members SET role = ?, raised_hand = 0, can_annotate = ? WHERE id = ?").bind(input.role, canAnnotateFlag, targetId).run();
+    target.can_annotate = canAnnotateFlag;
     if (input.role === "viewer") {
       await db().prepare("UPDATE share_requests SET status = 'cancelled', updated_at = ? WHERE member_id = ? AND status IN ('pending', 'approved', 'active')").bind(Date.now(), targetId).run();
       await db().prepare("UPDATE rooms SET active_share_id = NULL, active_share_owner = NULL WHERE id = ? AND active_share_owner = ?").bind(id, targetId).run();
     }
     target.role = input.role;
   } else if (input.action === "annotation") {
+    if (typeof input.enabled !== "boolean") throw new AppError("Некорректное разрешение");
     await db().prepare("UPDATE members SET can_annotate = ? WHERE id = ?").bind(input.enabled ? 1 : 0, targetId).run();
     target.can_annotate = input.enabled ? 1 : 0;
   } else if (input.action === "remove") {
