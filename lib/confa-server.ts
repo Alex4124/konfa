@@ -20,7 +20,7 @@ export type RecordingRow = {
 };
 
 export class AppError extends Error {
-  constructor(message: string, public status = 400) { super(message); }
+  constructor(message: string, public status = 400, public code?: string) { super(message); }
 }
 
 export function db(): D1Database {
@@ -56,7 +56,7 @@ export function json(data: unknown, status = 200): Response {
 }
 
 export function errorResponse(error: unknown): Response {
-  if (error instanceof AppError) return json({ error: error.message }, error.status);
+  if (error instanceof AppError) return json({ error: error.message, code: error.code }, error.status);
   console.error(error);
   return json({ error: "Внутренняя ошибка сервиса" }, 500);
 }
