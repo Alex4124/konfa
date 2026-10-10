@@ -120,7 +120,7 @@ async function roomState(request: Request, id: string): Promise<Response> {
   const workspace = await workspaceState(id, actor?.role === "host");
   const empty = Promise.resolve({ results: [] });
   const [members, messages, shareRequests, annotations, recording, boardAnnotations, docAnnotations] = await Promise.all([
-    database.prepare("SELECT id, name, role, can_annotate, raised_hand, removed, board_draw FROM members WHERE room_id = ? AND removed = 0").bind(id).all(),
+    database.prepare("SELECT id, name, role, can_annotate, raised_hand, removed, board_draw FROM members WHERE room_id = ? AND removed = 0 ORDER BY created_at, rowid").bind(id).all(),
     database.prepare("SELECT id, member_id, name, body, created_at FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT 100").bind(id).all(),
     actor?.role === "host"
       ? database.prepare("SELECT s.id, s.member_id, m.name, s.status, s.created_at FROM share_requests s JOIN members m ON m.id = s.member_id WHERE s.room_id = ? AND m.removed = 0 AND s.status IN ('pending', 'approved', 'active') ORDER BY s.created_at ASC").bind(id).all()

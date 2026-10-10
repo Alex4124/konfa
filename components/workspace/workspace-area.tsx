@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Maximize2, Minimize2, MonitorUp, Presentation, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,14 +9,17 @@ import { AnnotationToolbar, type ToolbarPicker } from "@/components/annotations/
 import { ClearAllDialog } from "@/components/annotations/clear-dialog";
 import { BoardPane } from "@/components/workspace/board-pane";
 import { DocumentPane } from "@/components/workspace/document-pane";
+import { CameraSizeControl, TileGrid, TileStrip, type RenderTile } from "@/components/participant-tiles";
 import { PaneRail, type PaneApi, type PaneDrawing, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
 import { useAnnotationHotkeys } from "@/hooks/use-annotation-hotkeys";
 import { useAnnotationPrefs, useArmedTool } from "@/hooks/use-annotation-prefs";
+import { useCameraSize } from "@/hooks/use-camera-size";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import type { MaterialUpload } from "@/hooks/use-material-upload";
 import { useHubHistory } from "@/hooks/use-surface-hub";
 import type { WorkspaceFollow } from "@/hooks/use-workspace-view";
 import { defaultToolFor, resolveEscape, toolbarLayoutFor, type HotkeyAction, type PrefsPatch, type TextSize } from "@/lib/annotation-tools";
+import { fitStrip } from "@/lib/tile-grid";
 import { boardRange, docSurface, parseSurface, workspaceLayout } from "@/lib/workspace";
 import type { Member, UiTool, WorkspaceView } from "@/lib/confa-types";
 
@@ -28,7 +31,7 @@ type Props = {
   canDraw: boolean;
   coarse: boolean;
   members: Member[];
-  renderTile: (person: Member, layout: "grid" | "top") => ReactNode;
+  renderTile: RenderTile;
   layer: WorkspaceLayerProps;
   follow: WorkspaceFollow;
   host: WorkspaceHostActions | null;
@@ -43,6 +46,7 @@ type Clearing = { part: "board" } | { part: "doc"; docId: string; page: number; 
 
 const ROW_MARGIN = 8;
 const EMPTY: Size = { width: 0, height: 0 };
+const NO_STAGE = { width: 0, height: 0, vw: 0, vh: 0 }; // the whole workspace with its strip, and the window
 const NO_PREFIX = "\u0000"; // matches no surface
 // Tools whose marks stay inside one band of the board: its seams show while one of them is armed.
 const BAND_TOOLS: ReadonlySet<UiTool> = new Set<UiTool>(["line", "arrow", "dashed", "rect", "circle", "triangle", "hexagon", "text", "move"]);
@@ -61,15 +65,18 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const [focus, setFocus] = useState<WorkspacePart>("board");
   const [area, setArea] = useState<Size>(EMPTY);
   const [columnWidth, setColumnWidth] = useState(0);
+  const [stage, setStage] = useState(NO_STAGE);
   const [penOnly, setPenOnly] = useState(false);
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
   const [editing, setEditing] = useState<{ part: WorkspacePart; color: string; size: TextSize } | null>(null); // the open text editor, if any
   const [clearing, setClearing] = useState<Clearing | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
   const boardApi = useRef<PaneApi>(null);
   const docApi = useRef<PaneApi>(null);
   const short = useMediaQuery("(max-height: 520px)");
+  const [cameraSize] = useCameraSize();
   const [prefs, updatePrefs] = useAnnotationPrefs();
   const toolKey = `ws:${view.id}`;
   // The tiles' layers read the same key with the same fallback, so they draw with what the toolbar shows.
@@ -83,6 +90,9 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const toolbarVisible = canDraw && active !== null && !recording;
   const toolbarLayout = toolbarLayoutFor({ expanded: false, coarse, short, areaWidth: columnWidth > 0 ? Math.max(1, columnWidth - ROW_MARGIN) : 0 });
   const column = toolbarVisible && toolbarLayout.placement === "column";
+  // The cameras above the parts: as tall as the viewer's camera size allows and their rows need.
+  const strip = !expanded && !recording && !layout.grid ? fitStrip(members.length, "top", cameraSize, stage, { width: stage.vw, height: stage.vh }) : null;
+  const stripShown = Boolean(strip && strip.extent > 0);
   // The surfaces undo and redo walk through: the active part's.
   const prefix = active === "board" ? boardRange(view.id).from : active === "doc" && docId ? `d:${docId}:` : NO_PREFIX;
   const history = useHubHistory(layer.hub, prefix);
@@ -106,17 +116,22 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   if (clearing && (!toolbarVisible || (clearing.part === "doc" && clearing.docId !== docId))) setClearing(null);
 
   useEffect(() => {
-    const element = areaRef.current, columnElement = columnRef.current;
-    if (!element || !columnElement) return;
+    const element = areaRef.current, columnElement = columnRef.current, rootElement = rootRef.current;
+    if (!element || !columnElement || !rootElement) return;
+    const win = rootElement.ownerDocument.defaultView;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const width = Math.round(entry.contentRect.width), height = Math.round(entry.contentRect.height);
         if (entry.target === columnElement) setColumnWidth(width);
-        else setArea((current) => current.width === width && current.height === height ? current : { width, height });
+        else if (entry.target === rootElement) {
+          const vw = win?.innerWidth ?? 0, vh = win?.innerHeight ?? 0;
+          setStage((current) => current.width === width && current.height === height && current.vw === vw && current.vh === vh ? current : { width, height, vw, vh });
+        } else setArea((current) => current.width === width && current.height === height ? current : { width, height });
       }
     });
     observer.observe(element);
     observer.observe(columnElement);
+    observer.observe(rootElement);
     return () => observer.disconnect();
   }, []);
 
@@ -200,10 +215,8 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const onEditing = (part: WorkspacePart, style: { color: string; size: TextSize } | null) => setEditing(style ? { part, ...style } : null);
   const rail = (part: WorkspacePart) => <PaneRail key={`${part}-rail`} part={part} orientation={layout.orientation} busy={part === "doc" && Boolean(upload)} onExpand={host ? () => host.collapse(part, false) : undefined} />;
 
-  return <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0e192c]" onPointerDownCapture={commitTexts}>
-    {!expanded && !recording && !layout.grid && members.length > 0 && <div aria-label="Видео участников" className="flex h-[clamp(64px,11vh,136px)] shrink-0 gap-2 overflow-x-auto px-2 pt-2 short:hidden">
-      {members.map((person) => renderTile(person, "top"))}
-    </div>}
+  return <div ref={rootRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0e192c]" onPointerDownCapture={commitTexts}>
+    {strip && stripShown && <TileStrip members={members} renderTile={renderTile} placement="top" strip={strip} />}
 
     {!recording && <div className="flex min-h-11 shrink-0 items-center gap-2 px-3 pt-2">
       <Presentation size={18} className="shrink-0 text-[#9af4e7]" />
@@ -212,6 +225,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
         ? <Button type="button" variant="secondary" size="sm" aria-pressed={view.allDraw} title={view.allDraw ? "Сейчас рисуют все ученики. Выключить — останутся только вызванные к доске" : "Включить, чтобы рисовать могли все ученики. Вызвать одного — кнопка «К доске» в списке участников"} className={`text-white hover:bg-[#3e5673] ${view.allDraw ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => host.setAllDraw(!view.allDraw)}><Users />Все ученики рисуют: {view.allDraw ? "да" : "нет"}</Button>
         : canDraw && <span className="rounded-full bg-[#6de7d4]/15 px-2.5 py-1 text-xs font-medium text-[#9af4e7]">Вы у доски — можно рисовать</span>}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
+        {stripShown && <CameraSizeControl className="bg-[#2d415d]" />}
         {onShowShare && <Button type="button" variant="secondary" size="sm" title="Показать демонстрацию экрана" aria-label="Показать демонстрацию экрана" className="bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={onShowShare}><MonitorUp /><span className="max-sm:hidden">Демонстрация</span></Button>}
         <Button type="button" variant="secondary" size="icon-sm" title={expanded ? "Свернуть" : "Развернуть на весь экран"} aria-label={expanded ? "Свернуть" : "Развернуть на весь экран"} className="bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={expanded ? onCollapse : onExpand}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
       </div>
@@ -221,9 +235,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
       <div ref={areaRef} className={`flex min-h-0 min-w-0 flex-1 gap-2 p-2 ${layout.orientation === "row" ? "flex-row" : "flex-col"}`}>
         {layout.board === "rail" && rail("board")}
         {layout.board === "pane" && <BoardPane api={boardApi} view={view} layer={layer} drawing={drawing} follow={follow} highlight={highlight("board")} orientation={layout.orientation} host={host} onActivate={setFocus} onEditing={onEditing} />}
-        {layout.grid && <div aria-label="Видео участников" className="grid min-h-0 min-w-0 flex-1 auto-rows-[minmax(120px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
-          {members.map((person) => renderTile(person, "grid"))}
-        </div>}
+        {layout.grid && <TileGrid members={members} renderTile={renderTile} />}
         {layout.doc === "pane" && <DocumentPane api={docApi} view={view} roomId={roomId} layer={layer} drawing={drawing} follow={follow} highlight={highlight("doc")} orientation={layout.orientation} host={host} upload={upload} onActivate={setFocus} onEditing={onEditing} />}
         {layout.doc === "rail" && rail("doc")}
       </div>

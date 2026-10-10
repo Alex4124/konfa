@@ -1,14 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import type { TrackReference } from "@livekit/components-react";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, LayoutGrid, List, Maximize2, Minimize2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AnnotationLayer } from "@/components/annotations/annotation-layer";
+import { CameraSizeControl, TileStrip, type RenderTile } from "@/components/participant-tiles";
 import { SharedScreen } from "@/components/shared-screen";
 import { useAnnotationPrefs, useArmedTool } from "@/hooks/use-annotation-prefs";
+import { useCameraSize } from "@/hooks/use-camera-size";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { defaultToolFor, toolbarLayoutFor } from "@/lib/annotation-tools";
+import { fitStrip } from "@/lib/tile-grid";
 import { stripPlacement } from "@/lib/view-transform";
 import type { RoomState, UiTool } from "@/lib/confa-types";
 
@@ -23,7 +26,6 @@ const TOOLBAR_COLUMN_PX = 60;
 type Area = { width: number; height: number; vw: number; vh: number };
 // The top-right cluster over the share (RoomView passes its own buttons in the same look).
 export const clusterButton = "bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a] max-md:size-9 short:size-9";
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 export type PresentationLayerProps = Omit<ComponentProps<typeof AnnotationLayer>, "shareId" | "toolbar" | "portalContainer" | "onToolChange">;
 type Props = {
   state: RoomState;
@@ -32,7 +34,7 @@ type Props = {
   expanded: boolean;
   onExpand: () => void;
   onCollapse: () => void;
-  renderTile: (person: Member, layout: "top" | "left") => ReactNode;
+  renderTile: RenderTile;
   renderParticipantList: () => ReactNode;
   layerProps: PresentationLayerProps;
   toolbarVisible: boolean;
@@ -59,6 +61,7 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   const coarse = layerProps.coarse ?? false;
   const short = useMediaQuery("(max-height: 520px)");
   const [prefs] = useAnnotationPrefs();
+  const [cameraSize] = useCameraSize();
   // Same store and fallback as the layer, so the frame's interaction always matches the armed tool.
   const [uiTool] = useArmedTool(shareId ?? "", defaultToolFor({ armedByDefault: layerProps.armedByDefault ?? false, coarse, lastDrawTool: prefs.lastDrawTool }));
   const interaction = layerProps.canDraw && uiTool !== "view" ? "draw" : "view";
@@ -66,11 +69,14 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   const toolbarSpace = columnWidth > 0 ? Math.max(1, columnWidth - (expanded ? OVERLAY_MARGIN : ROW_MARGIN)) : 0;
   const toolbarLayout = toolbarLayoutFor({ expanded, coarse, short, areaWidth: toolbarSpace });
   const placement = toolbarLayout.placement;
-  // The participants strip goes where it leaves the larger frame (sizes as in its clamp() classes); the expanded overlay keeps width ≥ height.
+  // The participants strip goes where it leaves the larger frame, at the size its tiles take there; the expanded overlay keeps width ≥ height.
   const toolbarRow = toolbarVisible && placement === "row" ? TOOLBAR_ROW_PX : 0;
   const toolbarColumn = toolbarVisible && placement === "column" ? TOOLBAR_COLUMN_PX : 0;
-  const strip = { top: clamp(.11 * area.vh, 64, 136), left: clamp(.15 * area.vw, 100, 176) };
-  const participantsOnTop = area.width <= 0 ? true : expanded ? area.width >= area.height : stripPlacement({ width: area.width - toolbarColumn, height: area.height - toolbarRow }, frameAspect, strip) === "top";
+  const viewport = { width: area.vw, height: area.vh };
+  const strips = { top: fitStrip(members.length, "top", cameraSize, area, viewport), left: fitStrip(members.length, "left", cameraSize, area, viewport) };
+  const participantsOnTop = area.width <= 0 ? true : expanded ? area.width >= area.height : stripPlacement({ width: area.width - toolbarColumn, height: area.height - toolbarRow }, frameAspect, { top: strips.top.extent, left: strips.left.extent }) === "top";
+  const strip = participantsOnTop ? strips.top : strips.left;
+  const stripShown = !expanded && strip.extent > 0;
   // While a stroke is in progress (data-annotating on the layer's svg) the overlays fade and let the pointer through.
   const fade = "transition-opacity group-has-data-[annotating=true]/presentation:pointer-events-none group-has-data-[annotating=true]/presentation:opacity-30";
   // The expanded participants panel starts right of the toolbar column (w-15 + 12 px), so it never covers the tools.
@@ -168,11 +174,7 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   }
 
   return <div ref={presentationRef} className={`group/presentation relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0e192c] ${participantsOnTop ? "flex-col" : "flex-row"}`}>
-    {!expanded && <div aria-label="Видео участников" className={participantsOnTop
-      ? "flex h-[clamp(64px,11vh,136px)] shrink-0 gap-2 overflow-x-auto px-2 py-1 short:hidden"
-      : "flex w-[clamp(100px,15vw,176px)] shrink-0 flex-col gap-2 overflow-y-auto px-1 py-2 short:hidden"}>
-      {members.map((person) => renderTile(person, participantsOnTop ? "top" : "left"))}
-    </div>}
+    {stripShown && <TileStrip members={members} renderTile={renderTile} placement={participantsOnTop ? "top" : "left"} strip={strip} />}
 
     <div ref={columnRef} className={`relative flex min-h-0 min-w-0 flex-1 ${placement === "column" ? "flex-row" : "flex-col"}`}>
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black">
@@ -186,7 +188,8 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
         : placement === "column" ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 py-1"} />}
     </div>
 
-    <div className={`absolute right-3 top-3 z-40 flex gap-2 ${fade}`}>
+    <div style={{ "--strip": `${stripShown && participantsOnTop ? strip.extent : 0}px` } as CSSProperties} className={`absolute right-3 top-[calc(var(--strip)+12px)] z-40 flex items-center gap-2 short:top-3 ${fade}`}>
+      {stripShown && <CameraSizeControl className="bg-[#0e192c]/85 shadow-xl" />}
       {actions}
       <Button variant="secondary" size="icon-lg" title={expanded ? "Свернуть экран" : "Развернуть экран"} aria-label={expanded ? "Свернуть экран" : "Развернуть экран"} className={clusterButton} onClick={() => expanded ? onCollapse() : onExpand()}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
     </div>
