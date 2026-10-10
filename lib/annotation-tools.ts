@@ -31,7 +31,7 @@ export type ToolGroup = "mode" | "draw" | "line" | "shape" | "edit";
 // lucide-react export names; the toolbar maps them with an exhaustive Record<ToolIconName, LucideIcon>.
 export type ToolIconName = "Eye" | "WandSparkles" | "Pen" | "Highlighter" | "Minus" | "ArrowUpRight" | "RectangleHorizontal" | "Circle" | "Triangle" | "Hexagon" | "Type" | "Grab" | "Eraser";
 // code: KeyboardEvent.code; key: what the UI shows; dashed: draw the icon with a dash pattern.
-export type ToolMeta = { readonly label: string; readonly icon: ToolIconName; readonly group: ToolGroup; readonly code?: string; readonly key?: string; readonly hint?: string; readonly dashed?: boolean };
+export type ToolMeta = { readonly label: string; readonly icon: ToolIconName; readonly group: ToolGroup; readonly code?: string; readonly key?: string; readonly dashed?: boolean };
 
 export const TOOL_META: Readonly<Record<UiTool, ToolMeta>> = {
   view: { label: "Просмотр", icon: "Eye", group: "mode", code: "Escape", key: "Esc" },
@@ -39,11 +39,11 @@ export const TOOL_META: Readonly<Record<UiTool, ToolMeta>> = {
   pen: { label: "Карандаш", icon: "Pen", group: "draw", code: "KeyP", key: "P" },
   marker: { label: "Маркер", icon: "Highlighter", group: "draw", code: "KeyM", key: "M" },
   text: { label: "Текст", icon: "Type", group: "draw", code: "KeyT", key: "T" },
-  line: { label: "Прямая линия", icon: "Minus", group: "line", hint: "Shift — шаг 45°" },
-  arrow: { label: "Стрелка", icon: "ArrowUpRight", group: "line", code: "KeyA", key: "A", hint: "Shift — шаг 45°" },
-  dashed: { label: "Пунктир", icon: "Minus", group: "line", hint: "Shift — шаг 45°", dashed: true },
-  rect: { label: "Прямоугольник", icon: "RectangleHorizontal", group: "shape", code: "KeyR", key: "R", hint: "Shift — квадрат" },
-  circle: { label: "Эллипс", icon: "Circle", group: "shape", hint: "Shift — круг" },
+  line: { label: "Прямая линия", icon: "Minus", group: "line" },
+  arrow: { label: "Стрелка", icon: "ArrowUpRight", group: "line", code: "KeyA", key: "A" },
+  dashed: { label: "Пунктир", icon: "Minus", group: "line", dashed: true },
+  rect: { label: "Прямоугольник", icon: "RectangleHorizontal", group: "shape", code: "KeyR", key: "R" },
+  circle: { label: "Эллипс", icon: "Circle", group: "shape" },
   triangle: { label: "Треугольник", icon: "Triangle", group: "shape" },
   hexagon: { label: "Шестиугольник", icon: "Hexagon", group: "shape" },
   move: { label: "Перемещение", icon: "Grab", group: "edit", code: "KeyV", key: "V" },
@@ -89,8 +89,7 @@ export function widthGroup(tool: UiTool): WidthGroup | null {
 
 export function toolTitle(tool: UiTool): string {
   const meta = TOOL_META[tool];
-  const extra = [meta.key, meta.hint].filter(Boolean).join(", ");
-  return extra ? `${meta.label} (${extra})` : meta.label;
+  return meta.key ? `${meta.label} (${meta.key})` : meta.label;
 }
 
 // Value for aria-keyshortcuts.

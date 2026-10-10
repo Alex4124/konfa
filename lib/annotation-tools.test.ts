@@ -66,8 +66,8 @@ describe("tool helpers", () => {
   it("titles and aria-keyshortcuts", () => {
     assert.equal(toolTitle("pen"), "Карандаш (P)");
     assert.equal(toolTitle("view"), "Просмотр (Esc)");
-    assert.equal(toolTitle("circle"), "Эллипс (Shift — круг)");
-    assert.equal(toolTitle("rect"), "Прямоугольник (R, Shift — квадрат)");
+    assert.equal(toolTitle("circle"), "Эллипс");
+    assert.equal(toolTitle("rect"), "Прямоугольник (R)");
     assert.equal(toolTitle("hexagon"), "Шестиугольник");
     assert.equal(toolShortcut("pen"), "P");
     assert.equal(toolShortcut("laser"), "L");
