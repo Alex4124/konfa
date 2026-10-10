@@ -18,6 +18,7 @@ type Props = {
   coarse: boolean;
   canModerate: boolean;
   markCount: number;
+  clearLabel?: string; // instead of «Очистить все пометки (N)» (the workspace: the whole board, a material's page)
   canUndo: boolean;
   canRedo: boolean;
   penOnly: boolean;
@@ -143,7 +144,7 @@ export function AnnotationToolbar(p: Props) {
       </div>}
       {p.canModerate && <>
         <div aria-hidden className="my-1 h-px bg-white/10" />
-        <button type="button" disabled={!p.markCount} className={`${menuItemClass} text-rose-200 hover:bg-rose-500/20 focus-visible:bg-rose-500/20`} onClick={() => { p.onOpenPicker(null); p.onClearRequest(); }}><Trash2 size={18} /><span className="flex-1">Очистить все пометки ({p.markCount})</span></button>
+        <button type="button" disabled={!p.markCount} className={`${menuItemClass} text-rose-200 hover:bg-rose-500/20 focus-visible:bg-rose-500/20`} onClick={() => { p.onOpenPicker(null); p.onClearRequest(); }}><Trash2 size={18} /><span className="flex-1">{p.clearLabel ?? `Очистить все пометки (${p.markCount})`}</span></button>
       </>}
     </PopoverContent>
   </Popover>;

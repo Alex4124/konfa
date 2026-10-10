@@ -13,9 +13,10 @@ import {
   ADD_RATE_MAX, ADD_RATE_WINDOW_MS, ANNOTATION_CAP, ANNOTATION_READ_LIMIT,
   chunk, fitAnnotationOp, idList, parseUuid, placeholders,
 } from "@/lib/annotation-wire";
+import { SURFACES_PER_REQUEST } from "@/lib/surface-hub";
 import {
-  canAnnotateBoard, canModerateBoard, cleanDocName, IMAGE_TYPES, isOfficeExtension, MAX_CONVERT_BYTES, MAX_DOC_PAGES, MAX_PAGE_BYTES, MAX_ROOM_DOCS,
-  pageKey, parseSurface, ROOM_ANNOTATION_CAP, ROOM_FILES_QUOTA, roomFilesPrefix, sniffImage, toWorkspaceView, TOTAL_FILES_QUOTA, UPLOAD_STALE_MS,
+  boardRange, canAnnotateBoard, canModerateBoard, cleanDocName, IMAGE_TYPES, isOfficeExtension, MAX_CONVERT_BYTES, MAX_DOC_PAGES, MAX_PAGE_BYTES, MAX_ROOM_DOCS,
+  pageKey, parseSurface, ROOM_ANNOTATION_CAP, ROOM_FILES_QUOTA, roomFilesPrefix, sniffImage, studentBandLimit, toWorkspaceView, TOTAL_FILES_QUOTA, UPLOAD_STALE_MS,
   validatePageSizes, workspaceUpdate, type DocumentRow, type Surface, type WorkspaceRow,
 } from "@/lib/workspace";
 import type { Annotation, AnnotationKind, AnnotationOp, AnnotationPayload, WorkspaceDocument } from "@/lib/confa-types";
@@ -28,8 +29,9 @@ const LEGACY_ANNOTATION_REFRESH = false;
 type ShareRequestRow = { id: string; room_id: string; member_id: string; status: string; created_at: number; updated_at: number };
 type StoredAnnotation = Annotation & { room_id: string; share_id: string; deleted: number };
 type OpBody<T = AnnotationOp> = T extends unknown ? Omit<T, "type" | "v" | "shareId" | "by"> : never;
-// board: a workspace surface (board sheet or material page), with the board's rules and the room-wide mark cap.
-type AnnotationScope = { roomId: string; shareId: string; member: MemberRow; moderator: boolean; board: boolean; canChange(authorId: string): boolean };
+// board: a workspace surface (board band or material page), with the board's rules, the room-wide mark cap and a revision.
+// surface: which one; grow: the bands the board has in use once a mark lands on this (so far blank) band.
+type AnnotationScope = { roomId: string; shareId: string; member: MemberRow; moderator: boolean; board: boolean; surface?: Surface; grow?: number; canChange(authorId: string): boolean };
 const FILES_STALE_MS = 14 * 86400_000;
 
 const ROW_COLUMNS = "a.rowid AS seq, a.id, a.author_id, COALESCE(m.name, '') AS author_name, a.kind, a.payload, a.created_at";
@@ -63,8 +65,32 @@ function parts(request: Request): string[] {
   return new URL(request.url).pathname.split("/").filter(Boolean).slice(1);
 }
 
+function surfaceRowsQuery(roomId: string, shareId: string): D1PreparedStatement {
+  return db().prepare(`SELECT * FROM (SELECT ${ROW_COLUMNS} ${ROW_SOURCE} WHERE a.room_id = ? AND a.share_id = ? AND a.deleted = 0 ORDER BY a.rowid DESC LIMIT ${ANNOTATION_READ_LIMIT}) ORDER BY seq ASC`).bind(roomId, shareId);
+}
+
 function surfaceRows(roomId: string, shareId: string) {
-  return db().prepare(`SELECT * FROM (SELECT ${ROW_COLUMNS} ${ROW_SOURCE} WHERE a.room_id = ? AND a.share_id = ? AND a.deleted = 0 ORDER BY a.rowid DESC LIMIT ${ANNOTATION_READ_LIMIT}) ORDER BY seq ASC`).bind(roomId, shareId).all();
+  return surfaceRowsQuery(roomId, shareId).all();
+}
+
+// Marks of the workspace surfaces a client has on screen (board bands, material pages). The client names the revision it
+// holds of each; rows come back only for those that moved, so a quiet lesson costs one small query per poll.
+async function surfacesState(request: Request, id: string): Promise<Response> {
+  await authorizeState(request, id);
+  const query = new URL(request.url).searchParams;
+  const ids = (query.get("ids") || "").split(",").filter(Boolean);
+  const held = (query.get("revs") || "").split(",").map(Number);
+  if (!ids.length || ids.length > SURFACES_PER_REQUEST || new Set(ids).size !== ids.length || ids.some((shareId) => !parseSurface(shareId))) throw new AppError("Некорректный запрос", 400);
+  const database = db();
+  // Rows are read by room_id and share_id, so an id from another room simply has none.
+  const known = await database.prepare(`SELECT share_id, rev FROM surface_revs WHERE room_id = ? AND share_id IN (${placeholders(ids.length)})`).bind(id, ...ids).all<{ share_id: string; rev: number }>();
+  const revOf = new Map(known.results.map((row) => [row.share_id, row.rev]));
+  const moved = ids.filter((shareId, index) => (revOf.get(shareId) ?? 0) !== held[index]);
+  const rows = moved.length ? await database.batch(moved.map((shareId) => surfaceRowsQuery(id, shareId))) : [];
+  const surfaces: Record<string, { rev: number; rows?: unknown[] }> = {};
+  for (const shareId of ids) surfaces[shareId] = { rev: revOf.get(shareId) ?? 0 };
+  moved.forEach((shareId, index) => { surfaces[shareId].rows = rowsOf(rows[index]); });
+  return json({ surfaces });
 }
 
 async function documentList(roomId: string): Promise<WorkspaceDocument[]> {
@@ -88,6 +114,9 @@ async function roomState(request: Request, id: string): Promise<Response> {
   const room = await roomById(id);
   const database = db();
   if (room.recording_id) await refreshRecording(room.recording_id);
+  // v=2: a client that reads workspace marks through /surfaces. Tabs opened before that still get the rows of the band and
+  // the page under the teacher's position here.
+  const legacy = new URL(request.url).searchParams.get("v") !== "2";
   const workspace = await workspaceState(id, actor?.role === "host");
   const empty = Promise.resolve({ results: [] });
   const [members, messages, shareRequests, annotations, recording, boardAnnotations, docAnnotations] = await Promise.all([
@@ -102,8 +131,8 @@ async function roomState(request: Request, id: string): Promise<Response> {
     room.recording_id
       ? database.prepare("SELECT * FROM recordings WHERE id = ?").bind(room.recording_id).first<RecordingRow>()
       : Promise.resolve(null),
-    workspace?.open ? surfaceRows(id, workspace.boardSurface) : empty,
-    workspace?.open && workspace.doc ? surfaceRows(id, workspace.doc.surface) : empty,
+    legacy && workspace?.open ? surfaceRows(id, workspace.boardSurface) : empty,
+    legacy && workspace?.open && workspace.doc ? surfaceRows(id, workspace.doc.surface) : empty,
   ]);
   return json({
     room: { id, kind: room.kind, status: room.status, activeShareId: room.active_share_id, activeShareOwner: room.active_share_owner, annotationsEnabled: Boolean(room.annotations_enabled) },
@@ -113,8 +142,7 @@ async function roomState(request: Request, id: string): Promise<Response> {
     annotations: annotations.results,
     recording: recording ? { status: recording.status, url: recording.status === "ready" && recording.expires_at && recording.expires_at > Date.now() ? `/recordings/${await recordingShareToken(recording.id)}` : null } : null,
     workspace,
-    boardAnnotations: boardAnnotations.results,
-    docAnnotations: docAnnotations.results,
+    ...(legacy ? { boardAnnotations: boardAnnotations.results, docAnnotations: docAnnotations.results } : {}),
   });
 }
 
@@ -154,6 +182,7 @@ async function get(request: Request): Promise<Response> {
     return json({ id: room.id, kind: room.kind, status: room.status });
   }
   if (path[0] === "rooms" && path.length === 3 && path[2] === "state") return roomState(request, path[1]);
+  if (path[0] === "rooms" && path.length === 3 && path[2] === "surfaces") return surfacesState(request, path[1]);
   if (path[0] === "rooms" && path.length === 6 && path[2] === "documents" && path[4] === "pages") return documentPage(request, path[1], path[3], path[5]);
   if (path[0] === "recordings" && path.length === 2) {
     const recording = await recordingByToken(path[1]);
@@ -443,8 +472,13 @@ async function broadcastAnnotationOp(roomId: string, op: AnnotationOp): Promise<
   if (LEGACY_ANNOTATION_REFRESH) await broadcast(roomId, { type: "state-changed" });
 }
 
-function publishOp(scope: AnnotationScope, body: OpBody): Promise<void> {
-  return broadcastAnnotationOp(scope.roomId, { type: "annotations", v: 1, shareId: scope.shareId, by: scope.member.id, ...body });
+// Every change of a workspace surface's marks goes through here and moves its revision; the op carries it, so clients that
+// saw every op know their rows are current.
+async function publishOp(scope: AnnotationScope, body: OpBody): Promise<void> {
+  const rev = scope.board
+    ? await db().prepare("INSERT INTO surface_revs (room_id, share_id, rev) VALUES (?, ?, 1) ON CONFLICT(room_id, share_id) DO UPDATE SET rev = rev + 1 RETURNING rev").bind(scope.roomId, scope.shareId).first<number>("rev")
+    : null;
+  await broadcastAnnotationOp(scope.roomId, { type: "annotations", v: 1, shareId: scope.shareId, by: scope.member.id, ...(typeof rev === "number" ? { rev } : {}), ...body });
 }
 
 async function updateAnnotations(request: Request, id: string, member: MemberRow, room: RoomRow): Promise<Response> {
@@ -479,21 +513,23 @@ function shareScope(roomId: string, member: MemberRow, room: RoomRow, requested:
   return { roomId, shareId, member, moderator: canModerate(member, access), board: false, canChange: (authorId) => canChangeAnnotation(member, access, authorId) };
 }
 
-// Any existing sheet of the open board and any page of a ready material: a stroke sent just before the teacher turned the page
-// still lands on the page it was drawn on.
+// Any band of the open board and any page of a ready material, wherever the teacher has scrolled to. The teacher may write on
+// every band; a student no further than studentBandLimit, so a student cannot stretch everyone's board.
 async function workspaceScope(roomId: string, member: MemberRow, shareId: string, surface: Surface): Promise<AnnotationScope> {
   const database = db();
   const workspace = await database.prepare("SELECT * FROM workspaces WHERE room_id = ?").bind(roomId).first<WorkspaceRow>();
   if (!workspace?.open) throw new AppError("Доска закрыта", 409, "no-share");
+  let grow: number | undefined;
   if (surface.kind === "board") {
-    if (surface.workspaceId !== workspace.id || surface.page >= workspace.board_pages) throw new AppError("Лист доски сменился", 409, "share-changed");
+    if (surface.workspaceId !== workspace.id || (member.role !== "host" && surface.page > studentBandLimit(workspace))) throw new AppError("Доска сменилась", 409, "share-changed");
+    if (surface.page >= workspace.board_pages) grow = surface.page + 1;
   } else {
     const doc = await database.prepare("SELECT page_count FROM documents WHERE id = ? AND room_id = ? AND status = 'ready'").bind(surface.docId, roomId).first<{ page_count: number }>();
     if (!doc || surface.page >= doc.page_count) throw new AppError("Материал сменился", 409, "share-changed");
   }
   if (!canAnnotateBoard(member, { allDraw: Boolean(workspace.all_draw) })) throw new AppError("Учитель не разрешил вам рисовать на доске", 403, "forbidden");
   const moderator = canModerateBoard(member);
-  return { roomId, shareId, member, moderator, board: true, canChange: (authorId) => authorId === member.id || moderator };
+  return { roomId, shareId, member, moderator, board: true, surface, grow, canChange: (authorId) => authorId === member.id || moderator };
 }
 
 async function addAnnotation(scope: AnnotationScope, input: Record<string, unknown>): Promise<Response> {
@@ -518,12 +554,14 @@ async function insertAnnotation(scope: AnnotationScope, kind: AnnotationKind, pa
   const { roomId, shareId, member } = scope;
   const database = db();
   const now = Date.now();
-  // Workspace surfaces also share one cap per room: a board has up to 50 sheets and every material page is a surface.
+  // Workspace surfaces also share one cap per room: a board has up to 200 bands and every material page is a surface.
   const roomCap = scope.board ? ` AND (SELECT COUNT(*) FROM annotations WHERE room_id = ?2 AND deleted = 0) < ${ROOM_ANNOTATION_CAP}` : "";
   const inserted = await database.prepare(`INSERT INTO annotations (id, room_id, share_id, author_id, kind, payload, deleted, created_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, 0, ?7 WHERE (SELECT COUNT(*) FROM annotations WHERE room_id = ?2 AND share_id = ?3 AND deleted = 0) < ?8 AND (SELECT COUNT(*) FROM annotations WHERE room_id = ?2 AND share_id = ?3 AND author_id = ?4 AND created_at > ?9) < ?10${roomCap} ON CONFLICT(id) DO NOTHING`)
     .bind(rowId, roomId, shareId, member.id, kind, payload, now, ANNOTATION_CAP, now - ADD_RATE_WINDOW_MS, ADD_RATE_MAX).run();
   if (inserted.meta.changes) {
     const row: Annotation = { id: rowId, author_id: member.id, author_name: member.name, kind, payload, created_at: now, seq: inserted.meta.last_row_id };
+    // The first mark on a blank band: the board now reaches that far (clients learn it from the polled state).
+    if (scope.grow) await database.prepare("UPDATE workspaces SET board_pages = MAX(board_pages, ?) WHERE room_id = ?").bind(scope.grow, roomId).run();
     await publishOp(scope, { op: "add", rows: [row] });
     return json({ row }, 201);
   }
@@ -540,8 +578,13 @@ async function insertAnnotation(scope: AnnotationScope, kind: AnnotationKind, pa
     return json({ row: publicRow(stored) });
   }
   const { live = 0, recent = 0, roomLive = 0 } = rowsOf<{ live: number; recent: number; roomLive: number }>(counts)[0] ?? {};
-  if (live >= ANNOTATION_CAP) throw new AppError(`На экране уже ${ANNOTATION_CAP} пометок — очистите доску`, 409, "cap");
-  if (scope.board && roomLive >= ROOM_ANNOTATION_CAP) throw new AppError("На доске и в материалах слишком много пометок — очистите ненужные листы", 409, "cap");
+  if (live >= ANNOTATION_CAP) {
+    const text = scope.surface?.kind === "board" ? "Здесь уже слишком много пометок — прокрутите доску ниже"
+      : scope.surface?.kind === "doc" ? `На странице уже ${ANNOTATION_CAP} пометок — сотрите лишние`
+        : `На экране уже ${ANNOTATION_CAP} пометок — очистите доску`;
+    throw new AppError(text, 409, "cap");
+  }
+  if (scope.board && roomLive >= ROOM_ANNOTATION_CAP) throw new AppError("На доске и в материалах слишком много пометок — очистите доску", 409, "cap");
   if (recent >= ADD_RATE_MAX) throw new AppError("Слишком много пометок подряд — подождите пару секунд", 429, "rate");
   throw new AppError("Не удалось сохранить пометку — попробуйте ещё раз", 503, "retry");
 }
@@ -634,7 +677,7 @@ async function restoreAnnotations(scope: AnnotationScope, input: Record<string, 
 }
 
 async function clearAnnotations(scope: AnnotationScope): Promise<Response> {
-  if (!scope.moderator) throw new AppError(scope.board ? "Очистить лист может только учитель" : "Очистить пометки может ведущий или докладчик", 403, "forbidden");
+  if (!scope.moderator) throw new AppError(scope.board ? "Стирать все пометки может только учитель" : "Очистить пометки может ведущий или докладчик", 403, "forbidden");
   const database = db();
   const [selected] = await database.batch([
     database.prepare("SELECT id, rowid AS seq FROM annotations WHERE room_id = ? AND share_id = ? AND deleted = 0 ORDER BY rowid ASC").bind(scope.roomId, scope.shareId),
@@ -685,19 +728,31 @@ async function updateWorkspace(request: Request, id: string, member: MemberRow):
   let row = await database.prepare("SELECT * FROM workspaces WHERE room_id = ?").bind(id).first<WorkspaceRow>();
   if (!row) {
     if (input.action !== "open") throw new AppError("Сначала создайте доску", 409);
-    await database.prepare("INSERT INTO workspaces (room_id, id, open, board_page, board_pages, board_collapsed, doc_collapsed, doc_id, all_draw, version, created_at, updated_at) VALUES (?, ?, 0, 0, 1, 0, 0, NULL, 0, 1, ?, ?) ON CONFLICT(room_id) DO NOTHING").bind(id, crypto.randomUUID(), now, now).run();
+    await database.prepare("INSERT INTO workspaces (room_id, id, open, board_page, board_pages, board_pos, board_collapsed, doc_collapsed, doc_id, all_draw, version, created_at, updated_at) VALUES (?, ?, 0, 0, 1, 0, 0, 0, NULL, 0, 1, ?, ?) ON CONFLICT(room_id) DO NOTHING").bind(id, crypto.randomUUID(), now, now).run();
     row = await database.prepare("SELECT * FROM workspaces WHERE room_id = ?").bind(id).first<WorkspaceRow>();
     if (!row) throw new AppError("Не удалось создать доску", 500);
   }
-  const docId = input.action === "docPage" ? row.doc_id : parseUuid(input.docId);
+  const docId = input.action === "view" ? row.doc_id : parseUuid(input.docId);
   const doc = docId ? await database.prepare("SELECT id, page_count, status FROM documents WHERE id = ? AND room_id = ?").bind(docId, id).first<Pick<DocumentRow, "id" | "page_count" | "status">>() : null;
   const change = workspaceUpdate(row, input, doc);
   if ("error" in change) throw new AppError(change.error, change.status);
   // Keys come from workspaceUpdate's fixed set of columns.
   const fields = Object.entries(change.set);
   const statements: D1PreparedStatement[] = [];
-  if (change.docPage) statements.push(database.prepare("UPDATE documents SET page = ? WHERE id = ? AND room_id = ?").bind(change.docPage.page, change.docPage.docId, id));
+  if (change.docPos) statements.push(database.prepare("UPDATE documents SET pos = ?, page = ? WHERE id = ? AND room_id = ?").bind(change.docPos.pos, Math.floor(change.docPos.pos), change.docPos.docId, id));
+  if (change.quiet) {
+    // Where the teacher has scrolled to: peers follow over the data channel, this is for those who join later.
+    statements.push(database.prepare(`UPDATE workspaces SET ${[...fields.map(([key]) => `${key} = ?`), "updated_at = ?"].join(", ")} WHERE room_id = ?`).bind(...fields.map(([, value]) => value), now, id));
+    await database.batch(statements);
+    return json({ saved: true });
+  }
   if (input.action === "docDelete" && doc) statements.push(database.prepare("UPDATE documents SET status = 'deleted' WHERE id = ? AND room_id = ?").bind(doc.id, id));
+  const board = boardRange(row.id);
+  if (change.clearBoard) statements.push(
+    // 2, not 1: a restore (an undo already on its way, a tab that missed the reset) brings back erased marks only, never a cleared board.
+    database.prepare("UPDATE annotations SET deleted = 2 WHERE room_id = ? AND share_id >= ? AND share_id < ? AND deleted != 2").bind(id, board.from, board.to),
+    database.prepare("UPDATE surface_revs SET rev = rev + 1 WHERE room_id = ? AND share_id >= ? AND share_id < ?").bind(id, board.from, board.to),
+  );
   statements.push(
     database.prepare(`UPDATE workspaces SET ${[...fields.map(([key]) => `${key} = ?`), "version = version + 1", "updated_at = ?"].join(", ")} WHERE room_id = ?`).bind(...fields.map(([, value]) => value), now, id),
     database.prepare("SELECT version FROM workspaces WHERE room_id = ?").bind(id),
@@ -705,6 +760,8 @@ async function updateWorkspace(request: Request, id: string, member: MemberRow):
   const results = await database.batch(statements);
   const version = rowsOf<{ version: number }>(results[results.length - 1])[0]?.version ?? row.version + 1;
   if (input.action === "docDelete" && doc) await purgeDocument(id, doc.id);
+  // reset: every client forgets pending work and undo history of the cleared bands, then reads them again.
+  if (change.clearBoard) await broadcast(id, { type: "surfaces-changed", reset: board.from });
   await broadcast(id, { type: "state-changed" });
   return json({ version });
 }

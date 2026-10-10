@@ -1,19 +1,19 @@
 "use client";
 
-import type { DragEvent, ReactNode } from "react";
+import { useState, type DragEvent, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, FileText, LoaderCircle, type LucideProps, PanelBottomClose, PanelBottomOpen, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, PanelTopClose, PanelTopOpen, Presentation } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { AnnotationSync } from "@/hooks/use-annotation-sync";
 import type { FrameInteraction } from "@/components/zoom-frame";
-import type { ToolbarLayout } from "@/lib/annotation-tools";
+import type { StripApi } from "@/components/workspace/scroll-strip-view";
+import type { TextSize } from "@/lib/annotation-tools";
+import type { SurfaceHub } from "@/lib/surface-hub";
 
 export type WorkspacePart = "board" | "doc";
 export type Orientation = "row" | "column";
-// The annotation layer's inputs shared by both parts (each part has its own sync).
-export type WorkspaceLayerProps = { sync: AnnotationSync; selfId: string; canDraw: boolean; canModerate: boolean; armedByDefault: boolean; coarse: boolean };
+// The annotation layers' inputs shared by every tile of both parts (each tile takes its store from the hub).
+export type WorkspaceLayerProps = { hub: SurfaceHub; selfId: string; canDraw: boolean; canModerate: boolean; armedByDefault: boolean; coarse: boolean };
 export type WorkspaceHostActions = {
-  flip(part: WorkspacePart, page: number): void;
-  addBoardPage(): void;
+  clearBoard(): void;
   collapse(part: WorkspacePart, collapsed: boolean): void;
   setAllDraw(enabled: boolean): void;
   selectDoc(docId: string): void;
@@ -22,8 +22,11 @@ export type WorkspaceHostActions = {
   uploadFile(file: File): void;
   cancelUpload(): void;
 };
-// What a part needs to draw: the shared tool key and frame interaction, and the toolbar while it is the active part.
-export type PaneDrawing = { toolKey: string; interaction: FrameInteraction; fingersDraw: boolean; toolbar: { container: HTMLElement | null; layout: ToolbarLayout } | undefined; active: boolean };
+// What a part needs to draw: the tool key and ink both parts share, the frame interaction, and the pen-only flag (one for both).
+export type PaneDrawing = { toolKey: string; color: string; interaction: FrameInteraction; fingersDraw: boolean; penOnly: boolean; onPenOnlyChange(value: boolean): void; seams: boolean };
+// What the workspace asks of a part: its strip, and (the material) the page a "clear" would act on.
+export type PaneApi = { strip: StripApi | null; current?: () => number };
+export type PaneEditing = (part: WorkspacePart, style: { color: string; size: TextSize } | null) => void;
 
 export const PART_LABEL: Record<WorkspacePart, string> = { board: "Доска", doc: "Материалы" };
 export const headerButton = "text-slate-200 hover:bg-white/10 hover:text-white";
@@ -45,14 +48,29 @@ export function CollapseButton({ part, orientation, onClick }: { part: Workspace
   return <Button type="button" variant="ghost" size="icon-sm" title={label} aria-label={label} className={headerButton} onClick={onClick}><PanelIcon part={part} orientation={orientation} open={false} /></Button>;
 }
 
-// «‹ Лист 2 / 3 ›»: the teacher turns pages, students only see the number.
-export function PageNav({ label, page, count, onFlip }: { label: string; page: number; count: number; onFlip?: (page: number) => void }) {
-  const text = <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300"><span className="max-sm:hidden">{label} </span>{page + 1} / {count}</span>;
-  if (!onFlip) return text;
-  return <div className="flex items-center" role="group" aria-label={`${label}: ${page + 1} из ${count}`}>
-    <Button type="button" variant="ghost" size="icon-sm" title="Назад" aria-label="Назад" disabled={page <= 0} className={headerButton} onClick={() => onFlip(page - 1)}><ChevronLeft /></Button>
-    {text}
-    <Button type="button" variant="ghost" size="icon-sm" title="Вперёд" aria-label="Вперёд" disabled={page >= count - 1} className={headerButton} onClick={() => onFlip(page + 1)}><ChevronRight /></Button>
+// «‹ 3 / 12 ›»: where the view is. The teacher steps to the neighbouring page or types a page number; students only see it.
+export function PageJump({ page, count, onJump, onStep }: { page: number; count: number; onJump?: (page: number) => void; onStep?: (by: -1 | 1) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  if (!onJump || !onStep) return <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300"><span className="max-sm:hidden">Стр. </span>{page + 1} / {count}</span>;
+  const go = () => {
+    const wanted = Number.parseInt(draft ?? "", 10);
+    setDraft(null);
+    if (Number.isFinite(wanted)) onJump(Math.min(count, Math.max(1, wanted)) - 1);
+  };
+  return <div className="flex items-center" role="group" aria-label={`Страница ${page + 1} из ${count}`}>
+    <Button type="button" variant="ghost" size="icon-sm" title="Предыдущая страница" aria-label="Предыдущая страница" disabled={page <= 0} className={headerButton} onClick={() => onStep(-1)}><ChevronLeft /></Button>
+    <input aria-label="Номер страницы" inputMode="numeric" value={draft ?? String(page + 1)} title="Введите номер страницы и нажмите Enter"
+      className="h-7 w-9 rounded-md border border-white/15 bg-[#0e192c] text-center text-xs tabular-nums text-white outline-none focus:border-[#6de7d4]"
+      onFocus={(event) => { setDraft(String(page + 1)); event.currentTarget.select(); }}
+      onChange={(event) => setDraft(event.target.value.replace(/\D/g, "").slice(0, 3))}
+      onBlur={() => setDraft(null)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") { go(); event.currentTarget.blur(); }
+        else if (event.key === "Escape") { setDraft(null); event.currentTarget.blur(); }
+        event.stopPropagation();
+      }} />
+    <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300">/ {count}</span>
+    <Button type="button" variant="ghost" size="icon-sm" title="Следующая страница" aria-label="Следующая страница" disabled={page >= count - 1} className={headerButton} onClick={() => onStep(1)}><ChevronRight /></Button>
   </div>;
 }
 

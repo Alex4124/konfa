@@ -41,6 +41,12 @@ export type AnnotationClientOptions = {
   now(): number;
   onNotice?(notice: SyncNotice): void;
   requestRefresh?(): void;
+  // Several clients behind one toolbar (the workspace's tiles): a shared tag counter orders their history entries, so undo can
+  // pick the store with the newest one; onRecord tells the owner a new user action was recorded here.
+  nextTag?(): number;
+  onRecord?(): void;
+  // Counts the user's new actions on every surface of the owner: an undo that was on its way across one keeps no redo.
+  actionsElsewhere?(): number;
 };
 
 export const NOTICE_TEXT: Record<SyncErrorCode, string> = {
@@ -261,6 +267,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
   const rekeyed = new Map<string, string>();
   const resolve = (id: string) => rekeyed.get(id) ?? id;
   let tags = 0, generation = 0;
+  const nextTag = o.nextTag ?? (() => ++tags);
   let eraseBuffer: string[] = [];
   let eraseShare: string | null = null;
   let flushTimer: number | null = null;
@@ -311,6 +318,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
   const record = (entry: HistoryEntry) => {
     generation++;
     store.mutateHistory((h) => pushHistory(h, entry));
+    o.onRecord?.();
   };
   const forget = (tag: number) => store.mutateHistory((h) => mapHistory(h, (entry) => entry.tag === tag ? null : entry));
   const replaceEntry = (tag: number, update: (entry: HistoryEntry) => HistoryEntry) => store.mutateHistory((h) => mapHistory(h, (entry) => entry.tag === tag ? update(entry) : entry));
@@ -406,7 +414,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
     }
     if (!moved.dx && !moved.dy) return { result: OK, moved: { dx: 0, dy: 0 } };
     const overlay: PendingOverlay = { data: moved.payload, status: "moving" };
-    const tag = ++tags, since = store.serverCursor();
+    const tag = nextTag(), since = store.serverCursor();
     store.batch(() => {
       setOverlay(id, overlay);
       if (track) record({ op: "move", id, dx: moved.dx, dy: moved.dy, tag });
@@ -441,7 +449,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
     if ("error" in checked) return { result: report(failure("invalid", checked.error)) };
     const before = valuesBefore(data, after);
     const overlay: PendingOverlay = { data: checked.payload, status: "editing" };
-    const tag = ++tags, since = store.serverCursor();
+    const tag = nextTag(), since = store.serverCursor();
     store.batch(() => {
       setOverlay(id, overlay);
       if (track) record({ op: "edit", id, before, after, tag });
@@ -519,12 +527,13 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
     const shareId = o.shareIdOf();
     if (!shareId || !sameShare(shareId)) return failure("share-changed");
     const to = from === "undo" ? "redo" : "undo";
-    const startGeneration = generation;
+    const actions = () => generation + (o.actionsElsewhere?.() ?? 0);
+    const startGeneration = actions();
     store.mutateHistory((h) => h[from][h[from].length - 1] === entry ? { ...h, [from]: h[from].slice(0, -1) } : h);
     const { result, next } = await perform(shareId, inverseOf(entry));
     if (!sameShare(shareId)) return result;
-    if (next && (to === "undo" || generation === startGeneration)) store.mutateHistory((h) => pushStack(h, to, { ...next, tag: ++tags }));
-    else if (!result.ok && RETRIABLE.has(result.code) && generation === startGeneration) store.mutateHistory((h) => pushStack(h, from, entry));
+    if (next && (to === "undo" || actions() === startGeneration)) store.mutateHistory((h) => pushStack(h, to, { ...next, tag: nextTag() }));
+    else if (!result.ok && RETRIABLE.has(result.code) && actions() === startGeneration) store.mutateHistory((h) => pushStack(h, from, entry));
     return result;
   };
 
@@ -557,7 +566,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
       const since = store.serverCursor();
       store.batch(() => {
         addRows([row]);
-        record({ op: "add", ids: [id], tag: ++tags });
+        record({ op: "add", ids: [id], tag: nextTag() });
       });
       const outcome = await queue.run([id], () => send(() => ({ action: "add", id, kind, payload: checked.payload, shareId }), true));
       if (outcome.ok) {
@@ -616,7 +625,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
       if (!fresh.length) return;
       store.batch(() => {
         hide(fresh);
-        record({ op: "erase", ids: fresh, rows, gesture, tag: ++tags });
+        record({ op: "erase", ids: fresh, rows, gesture, tag: nextTag() });
       });
       eraseShare = shareId;
       eraseBuffer.push(...fresh);
@@ -652,7 +661,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
       store.batch(() => {
         if (ids.length) store.applyOp(clearOp(shareId, numberOr(outcome.body.upToSeq, upTo ?? 0)), "local", since);
         reveal();
-        if (ids.length && sameShare(shareId)) record({ op: "clear", ids, rows: ids.flatMap((id) => captured.get(id) ?? []), tag: ++tags });
+        if (ids.length && sameShare(shareId)) record({ op: "clear", ids, rows: ids.flatMap((id) => captured.get(id) ?? []), tag: nextTag() });
       });
       return OK;
     },
@@ -677,7 +686,7 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
       store.batch(() => {
         if (deleted.length) store.applyOp(eraseOp(shareId, deleted), "local", since);
         unhide(ids);
-        if (deleted.length && sameShare(shareId)) record({ op: "erase", ids: deleted, rows: rows.filter((row) => deleted.includes(row.id)), tag: ++tags });
+        if (deleted.length && sameShare(shareId)) record({ op: "erase", ids: deleted, rows: rows.filter((row) => deleted.includes(row.id)), tag: nextTag() });
       });
       return OK;
     },

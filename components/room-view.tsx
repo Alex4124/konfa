@@ -18,10 +18,11 @@ import type { WorkspaceHostActions, WorkspaceLayerProps } from "@/components/wor
 import { createStableBackgroundProcessor, type StableBackgroundProcessor } from "@/lib/stable-background";
 import { accessLevel, accessRoomFromState, canAnnotate, canModerate, isShareOwner, type AccessMember } from "@/lib/annotation-permissions";
 import { createStateRefresher, shareSnapshot, useAnnotationSync, windowTimers } from "@/hooks/use-annotation-sync";
+import { useSurfaceHub } from "@/hooks/use-surface-hub";
 import { useWorkspace } from "@/hooks/use-workspace";
+import { useWorkspaceView } from "@/hooks/use-workspace-view";
 import { useMaterialUpload } from "@/hooks/use-material-upload";
-import { acceptsBoard, acceptsDoc, boardContextFromState, canAnnotateBoard, docContextFromState, nextStage, selectBoardSnapshot, selectDocSnapshot, type StageChoice } from "@/lib/workspace";
-import type { SyncNotice } from "@/lib/annotation-client";
+import { boardRange, canAnnotateBoard, nextStage, type StageChoice } from "@/lib/workspace";
 import { resetArmedTool } from "@/hooks/use-annotation-prefs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useVisualViewportReset } from "@/hooks/use-visual-viewport-reset";
@@ -43,6 +44,7 @@ type ApiError = Error & { status?: number; code?: string };
 const PHONE_QUERY = "(max-width: 767px), (max-height: 520px)";
 const railSize = "max-sm:size-9 short:size-9 tiny:size-8"; // 320 px phones: seven buttons fit the row or the rail
 const moreItemClass = "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none hover:bg-white/10 focus-visible:bg-white/10 disabled:pointer-events-none disabled:opacity-40";
+const NO_MEMBERS: RoomState["members"] = [];
 const chatEmoji = ["😀", "😄", "😂", "😊", "😍", "👍", "👏", "🎉", "❤️", "🙏", "🤔", "😮", "😢", "🔥", "👋", "✅", "🙌", "😎", "🤝", "💯"];
 
 export function RoomView({ id, joined, initialCamera, background, onBackgroundChange, onLeave, onEnded, connectionError }: Props) {
@@ -128,27 +130,22 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       if (notice.code === "forbidden") void refresh();
     },
   });
-  // The workspace's two parts: each follows its own current surface (board sheet, material page) with its own store.
-  const workspaceNotice = (notice: SyncNotice) => {
-    toast(notice.text, { id: notice.code === "forbidden" ? "board-permission" : notice.code });
-    if (notice.code === "forbidden") void refresh();
-  };
-  const boardSync = useAnnotationSync({
+  // The workspace's marks: one store per band of the board and per page of the material, read through /surfaces.
+  const hub = useSurfaceHub({
     room, roomId: id, token: joined.sessionToken, self: { id: joined.member.id, name: joined.member.name }, state,
-    requestRefresh: () => void refresh(), onNotice: workspaceNotice, contextOf: boardContextFromState, accepts: acceptsBoard,
+    onNotice: (notice) => {
+      toast(notice.text, { id: notice.code === "forbidden" ? "board-permission" : notice.code });
+      if (notice.code === "forbidden") void refresh();
+    },
   });
-  const docSync = useAnnotationSync({
-    room, roomId: id, token: joined.sessionToken, self: { id: joined.member.id, name: joined.member.name }, state,
-    requestRefresh: () => void refresh(), onNotice: workspaceNotice, contextOf: docContextFromState, accepts: acceptsDoc,
-  });
-  // Marks live in the sync store; RoomView re-renders only when the rest of the state changes.
+  // Marks live in the sync stores; RoomView re-renders only when the rest of the state changes.
   const [refresher] = useState(() => {
     let stateKey = "";
     return createStateRefresher({
-      fetchState: async (signal) => await api("state", undefined, signal) as unknown as RoomState,
-      sinks: [{ sink: sync, select: shareSnapshot }, { sink: boardSync, select: selectBoardSnapshot }, { sink: docSync, select: selectDocSnapshot }],
+      fetchState: async (signal) => await api("state?v=2", undefined, signal) as unknown as RoomState,
+      sinks: [{ sink: sync, select: shareSnapshot }],
       onState: (next) => {
-        const rest = { ...next, annotations: [], boardAnnotations: [], docAnnotations: [] };
+        const rest = { ...next, annotations: [] };
         const key = JSON.stringify(rest);
         if (key === stateKey) return;
         stateKey = key;
@@ -163,6 +160,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
 
   const workspace = useWorkspace({ server: state?.workspace, post: (body) => api("workspace", body), refresh, onError: setError });
   const view = workspace.view;
+  const follow = useWorkspaceView({ room, members: state?.members ?? NO_MEMBERS, isHost: role === "host", save: (body) => api("workspace", body) });
   const materials = useMaterialUpload({ roomId: id, token: joined.sessionToken, onUploaded: (docId) => workspace.act({ action: "docSelect", docId }), onError: setError });
   const workspaceOpen = Boolean(view?.open);
   const canDrawBoard = workspaceOpen && canAnnotateBoard(self ?? { role, board_draw: 0 }, view);
@@ -555,11 +553,14 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     </>}
   </>;
   const workspaceLabel = !view ? "Создать доску" : view.open ? "Закрыть доску" : "Открыть доску";
-  const boardLayer: WorkspaceLayerProps = { sync: boardSync, selfId: joined.member.id, canDraw: canDrawBoard, canModerate: role === "host", armedByDefault: role === "host", coarse };
-  const docLayer: WorkspaceLayerProps = { ...boardLayer, sync: docSync };
+  const workspaceLayer: WorkspaceLayerProps = { hub, selfId: joined.member.id, canDraw: canDrawBoard, canModerate: role === "host", armedByDefault: role === "host", coarse };
   const workspaceHost: WorkspaceHostActions | null = role === "host" ? {
-    flip: workspace.flip,
-    addBoardPage: () => void workspace.act({ action: "addBoardPage" }, view ? { boardPages: view.boardPages + 1, boardPage: view.boardPages } : undefined),
+    // The server tells everyone to drop the board's marks; the teacher's own go at once.
+    clearBoard: () => {
+      if (!view) return;
+      const prefix = boardRange(view.id).from;
+      void workspace.act({ action: "boardClear" }).then((done) => { if (done) hub.reset(prefix); });
+    },
     collapse: (part, collapsed) => void workspace.act({ action: "collapse", part, collapsed }, part === "board" ? { boardCollapsed: collapsed } : { docCollapsed: collapsed }),
     setAllDraw: (enabled) => void workspace.act({ action: "allDraw", enabled }, { allDraw: enabled }),
     selectDoc: (docId) => void workspace.act({ action: "docSelect", docId }),
@@ -587,7 +588,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
 
     <div className="relative flex min-h-0 min-w-0 flex-1">
       <section className={`isolate flex min-w-0 flex-1 flex-col ${stage === "grid" ? "p-3 sm:p-5" : ""}`}>
-        {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={id} isHost={role === "host"} canDraw={canDrawBoard} coarse={coarse} members={visibleMembers} renderTile={renderParticipantTile} board={boardLayer} doc={docLayer} host={workspaceHost} upload={materials.upload} expanded={expanded} onExpand={() => setExpandedStage(`ws:${view.id}`)} onCollapse={() => setExpandedStage(null)} onShowShare={shareActive ? () => chooseStage("share") : undefined} />
+        {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={id} isHost={role === "host"} canDraw={canDrawBoard} coarse={coarse} members={visibleMembers} renderTile={renderParticipantTile} layer={workspaceLayer} follow={follow} host={workspaceHost} upload={materials.upload} expanded={expanded} onExpand={() => setExpandedStage(`ws:${view.id}`)} onCollapse={() => setExpandedStage(null)} onShowShare={shareActive ? () => chooseStage("share") : undefined} />
         : stage === "share" && activeScreen && state ? <PresentationArea state={state} activeScreen={activeScreen} members={visibleMembers} expanded={expanded} onExpand={expandScreen} onCollapse={() => setExpandedStage(null)} renderTile={renderParticipantTile} renderParticipantList={renderParticipantList} layerProps={layerProps} toolbarVisible={canDraw} actions={shareActions} placeholder={mirrorGuard && activeShareId ? <MirrorPlaceholder sync={sync} shareId={activeShareId} selfId={joined.member.id} pipSupported={pipSupported} pipOpen={Boolean(pipWindow)} onPip={togglePip} onShow={() => setSelfPreviewShareId(activeShareId)} /> : undefined} /> : <div className="grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
           {visibleMembers.map((person) => renderParticipantTile(person, "grid"))}
         </div>}

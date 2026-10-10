@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const rooms = sqliteTable("rooms", {
   id: text("id").primaryKey(),
@@ -85,6 +85,8 @@ export const workspaces = sqliteTable("workspaces", {
   version: integer("version").notNull().default(1),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
+  // Where the teacher has scrolled the board to: band index + fraction of the band above the viewport top (lib/scroll-strip).
+  boardPos: real("board_pos").notNull().default(0),
 });
 
 // Uploaded materials; page images live in the FILES bucket under rooms/<room>/docs/<id>/<page>.
@@ -99,4 +101,13 @@ export const documents = sqliteTable("documents", {
   status: text("status").notNull(),
   bytes: integer("bytes").notNull().default(0),
   createdAt: integer("created_at").notNull(),
+  pos: real("pos").notNull().default(0), // the teacher's scroll position in this material: page index + fraction
 }, (table) => [index("documents_room_idx").on(table.roomId, table.createdAt)]);
+
+// A counter per annotation surface, bumped with every change of its marks: clients name the revision they hold and are sent
+// rows only when it moved.
+export const surfaceRevs = sqliteTable("surface_revs", {
+  roomId: text("room_id").notNull().references(() => rooms.id),
+  shareId: text("share_id").notNull(),
+  rev: integer("rev").notNull().default(0),
+}, (table) => [primaryKey({ columns: [table.roomId, table.shareId] })]);

@@ -102,7 +102,7 @@ describe("tool helpers", () => {
 describe("prefs", () => {
   it("defaults", () => {
     assert.deepEqual(DEFAULT_PREFS, {
-      lastDrawTool: "pen", lineVariant: "arrow", shapeVariant: "rect", laserStyle: "laser", color: "#6de7d4",
+      lastDrawTool: "pen", lineVariant: "arrow", shapeVariant: "rect", laserStyle: "laser", color: "#6de7d4", paperColor: "#000000",
       widths: { pen: 4, marker: 16, shape: 4 }, textSize: "m", showAuthors: false, hotkeys: true, fingersDraw: false,
     });
     assert.ok(Object.isFrozen(DEFAULT_PREFS) && Object.isFrozen(DEFAULT_PREFS.widths));
@@ -169,6 +169,17 @@ describe("prefs", () => {
     assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { widths: { shape: 5 } })), false);
     assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { fingersDraw: true })), false);
     assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { lineVariant: "line" })), false);
+    assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { paperColor: "#2563eb" })), false);
+  });
+
+  it("the ink for white paper is a palette colour of its own, black by default", () => {
+    assert.equal(parsePrefs(JSON.stringify({ color: "#ffcc75" })).paperColor, "#000000");
+    assert.equal(parsePrefs(JSON.stringify({ paperColor: " #D92D3A " })).paperColor, "#d92d3a");
+    assert.equal(parsePrefs(JSON.stringify({ paperColor: "#123456" })).paperColor, "#000000");
+    const merged = mergePrefs(DEFAULT_PREFS, { paperColor: "#2563eb" });
+    assert.equal(merged.paperColor, "#2563eb");
+    assert.equal(merged.color, DEFAULT_PREFS.color, "the screen-share colour is untouched");
+    assert.equal(JSON.parse(serializePrefs(merged)).paperColor, "#2563eb");
   });
 });
 
