@@ -85,7 +85,7 @@ export function AnnotationToolbar(p: Props) {
 
   const menuTool = (next: UiTool, onPick = () => choose(next)) => {
     const meta = TOOL_META[next];
-    return <button key={next} type="button" aria-pressed={tool === next} title={toolTitle(next)} className={`${menuItemClass} ${tool === next ? "bg-white/10" : ""}`} onClick={onPick}><ToolIcon tool={next} /><span className="min-w-0 flex-1">{meta.label}</span>{meta.hint && <span className="text-xs text-slate-400">{meta.hint}</span>}</button>;
+    return <button key={next} type="button" aria-pressed={tool === next} title={toolTitle(next)} className={`${menuItemClass} ${tool === next ? "bg-white/10" : ""}`} onClick={onPick}><ToolIcon tool={next} /><span className="min-w-0 flex-1">{meta.label}</span></button>;
   };
 
   // Main button picks the remembered variant; the chevron opens the variants.
