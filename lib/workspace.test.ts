@@ -2,9 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { RoomState, WorkspaceView } from "@/lib/confa-types";
 import {
-  acceptsBoard, acceptsDoc, acceptsShare, applyWorkspacePatch, boardContextFromState, boardSurface, canAnnotateBoard, canModerateBoard, classifyUpload,
-  cleanDocName, clampPage, docContextFromState, docSurface, docTokenExp, fitLongSide, MAX_BOARD_PAGES, MAX_DOC_PAGES, mergeWorkspace, nextStage, parseSurface,
-  selectBoardSnapshot, selectDocSnapshot, sniffImage, sniffOffice, surfaceKind, toWorkspaceView, validatePageSizes, workspaceLayout, workspaceUpdate,
+  acceptsShare, applyWorkspacePatch, boardRange, boardSurface, canAnnotateBoard, canModerateBoard, classifyUpload,
+  cleanDocName, clampPage, docSurface, docTokenExp, fitLongSide, MAX_BOARD_BANDS, MAX_DOC_PAGES, mergeWorkspace, nextStage, parseSurface,
+  sniffImage, sniffOffice, studentBandLimit, surfaceKind, toWorkspaceView, validatePageSizes, workspaceContext, workspaceLayout, workspaceUpdate,
   type DocumentRow, type WorkspaceRow,
 } from "./workspace.ts";
 
@@ -12,11 +12,11 @@ const WS = "11111111-1111-4111-8111-111111111111";
 const DOC = "22222222-2222-4222-8222-222222222222";
 
 function row(over: Partial<WorkspaceRow> = {}): WorkspaceRow {
-  return { room_id: "room", id: WS, open: 1, board_page: 0, board_pages: 3, board_collapsed: 0, doc_collapsed: 0, doc_id: null, all_draw: 0, version: 4, created_at: 1, updated_at: 1, ...over };
+  return { room_id: "room", id: WS, open: 1, board_page: 0, board_pages: 3, board_pos: 0, board_collapsed: 0, doc_collapsed: 0, doc_id: null, all_draw: 0, version: 4, created_at: 1, updated_at: 1, ...over };
 }
 
 function doc(over: Partial<DocumentRow> = {}): DocumentRow {
-  return { id: DOC, room_id: "room", name: "Урок 1.pdf", kind: "pdf", page_count: 3, pages: JSON.stringify([[1600, 900], [1600, 900], [900, 1600]]), page: 1, status: "ready", bytes: 10, created_at: 1, ...over };
+  return { id: DOC, room_id: "room", name: "Урок 1.pdf", kind: "pdf", page_count: 3, pages: JSON.stringify([[1600, 900], [1600, 900], [900, 1600]]), page: 1, pos: 1.25, status: "ready", bytes: 10, created_at: 1, ...over };
 }
 
 function view(over: Partial<WorkspaceView> = {}): WorkspaceView {
@@ -33,7 +33,6 @@ function state(over: Partial<RoomState> = {}): RoomState {
     ],
     messages: [], shareRequests: [], annotations: [], recording: null,
     workspace: view(),
-    boardAnnotations: [], docAnnotations: [],
     ...over,
   };
 }
@@ -41,26 +40,29 @@ function state(over: Partial<RoomState> = {}): RoomState {
 describe("surfaces", () => {
   it("round-trips board and doc ids", () => {
     assert.deepEqual(parseSurface(boardSurface(WS, 4)), { kind: "board", workspaceId: WS, page: 4 });
+    assert.deepEqual(parseSurface(boardSurface(WS, MAX_BOARD_BANDS - 1)), { kind: "board", workspaceId: WS, page: 199 });
     assert.deepEqual(parseSurface(docSurface(DOC, 0)), { kind: "doc", docId: DOC, page: 0 });
-    assert.ok(boardSurface(WS, MAX_BOARD_PAGES - 1).length <= 64);
+    assert.ok(boardSurface(WS, MAX_BOARD_BANDS - 1).length <= 64);
     assert.ok(docSurface(DOC, MAX_DOC_PAGES - 1).length <= 64);
   });
 
   it("rejects malformed ids, pages past the limits and non-canonical numbers", () => {
-    for (const bad of [null, 5, "", "b:", `x:${WS}:1`, `b:${WS}`, `b:${WS}:-1`, `b:${WS}:01`, `b:${WS}:1.5`, `b:${"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".toUpperCase()}:1`, `b:not-a-uuid-not-a-uuid-not-a-uuid-xxxx:1`, `b:${WS}:${MAX_BOARD_PAGES}`, `d:${DOC}:${MAX_DOC_PAGES}`, ` b:${WS}:1`]) {
+    for (const bad of [null, 5, "", "b:", `x:${WS}:1`, `b:${WS}`, `b:${WS}:-1`, `b:${WS}:01`, `b:${WS}:1.5`, `b:${"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".toUpperCase()}:1`, `b:not-a-uuid-not-a-uuid-not-a-uuid-xxxx:1`, `b:${WS}:${MAX_BOARD_BANDS}`, `d:${DOC}:${MAX_DOC_PAGES}`, ` b:${WS}:1`]) {
       assert.equal(parseSurface(bad), null, String(bad));
     }
     assert.ok(parseSurface(`d:${DOC}:${MAX_DOC_PAGES - 1}`));
   });
 
-  it("routes by prefix", () => {
+  it("routes by prefix; a board's bands are one share_id range", () => {
     assert.equal(surfaceKind(boardSurface(WS, 9)), "board");
     assert.equal(surfaceKind(docSurface(DOC, 9)), "doc");
     assert.equal(surfaceKind("3e5c2f8a-0000-4000-8000-000000000000"), "share");
-    assert.equal(acceptsBoard("b:anything"), true);
-    assert.equal(acceptsDoc("b:anything"), false);
     assert.equal(acceptsShare("d:x"), false);
     assert.equal(acceptsShare("plain-share"), true);
+    const range = boardRange(WS);
+    for (const band of [0, 9, 10, 199]) assert.ok(boardSurface(WS, band) >= range.from && boardSurface(WS, band) < range.to, String(band));
+    assert.ok(!(docSurface(WS, 0) >= range.from && docSurface(WS, 0) < range.to));
+    assert.ok(!(boardSurface(DOC, 0) >= range.from && boardSurface(DOC, 0) < range.to));
   });
 });
 
@@ -78,34 +80,30 @@ describe("board permissions", () => {
     assert.equal(canModerateBoard({ role: "speaker" }), false);
   });
 
-  it("sync contexts name the current surfaces and apply the board rule", () => {
-    const s = state();
-    const board = boardContextFromState(s, "a");
-    assert.equal(board.shareId, boardSurface(WS, 0));
-    assert.equal(board.selfId, "a");
-    assert.equal(board.canAnnotate("a"), true);
-    assert.equal(board.canAnnotate("b"), false);
-    assert.equal(board.canAnnotate("h"), true);
-    assert.equal(board.canModerate("h"), true);
-    assert.equal(board.canModerate("a"), false);
-    assert.equal(board.nameOf("b"), "Борис");
-    assert.equal(docContextFromState(s, "a").shareId, docSurface(DOC, 1));
+  it("a surface's sync context carries its own id and the board rule", () => {
+    const band = boardSurface(WS, 7);
+    const context = workspaceContext(state(), "a", band);
+    assert.equal(context.shareId, band);
+    assert.equal(context.selfId, "a");
+    assert.equal(context.canAnnotate("a"), true);
+    assert.equal(context.canAnnotate("b"), false);
+    assert.equal(context.canAnnotate("h"), true);
+    assert.equal(context.canModerate("h"), true);
+    assert.equal(context.canModerate("a"), false);
+    assert.equal(context.nameOf("b"), "Борис");
   });
 
-  it("a closed workspace or a missing doc has no surface", () => {
-    const closed = state({ workspace: view({ open: false }) });
-    assert.equal(boardContextFromState(closed, "a").shareId, null);
-    assert.equal(docContextFromState(closed, "a").shareId, null);
-    assert.equal(docContextFromState(state({ workspace: view({ doc: null }) }), "a").shareId, null);
-    assert.equal(boardContextFromState(null, "a").shareId, null);
-    assert.equal(boardContextFromState(state({ workspace: null }), "a").canAnnotate("h"), false);
+  it("a student reaches the bands in use, the first blank one and the teacher's window", () => {
+    assert.equal(studentBandLimit(row({ board_pages: 3, board_pos: 0 })), 4, "the window at the top shows bands 0..4");
+    assert.equal(studentBandLimit(row({ board_pages: 9, board_pos: 1.5 })), 9, "the first blank band below the marks");
+    assert.equal(studentBandLimit(row({ board_pages: 3, board_pos: 20.7 })), 24, "the teacher scrolled on to clean paper");
+    assert.equal(studentBandLimit(row({ board_pages: 200, board_pos: 199.5 })), MAX_BOARD_BANDS - 1);
+    assert.equal(studentBandLimit(row({ board_pages: 1, board_pos: Number.NaN })), 4);
   });
 
-  it("snapshots pick the server's surface ids and rows", () => {
-    const rows = [{ id: "x", author_id: "h", author_name: "", kind: "pen" as const, payload: "{}", created_at: 0, seq: 1 }];
-    assert.deepEqual(selectBoardSnapshot(state({ boardAnnotations: rows })), { shareId: boardSurface(WS, 0), rows });
-    assert.deepEqual(selectDocSnapshot(state({ docAnnotations: rows })), { shareId: docSurface(DOC, 1), rows });
-    assert.deepEqual(selectBoardSnapshot(state({ workspace: null, boardAnnotations: undefined })), { shareId: null, rows: [] });
+  it("without a workspace nobody may draw", () => {
+    assert.equal(workspaceContext(null, "a", "x").shareId, null);
+    assert.equal(workspaceContext(state({ workspace: null }), "a", "x").canAnnotate("h"), false);
   });
 });
 
@@ -123,12 +121,30 @@ describe("workspaceUpdate", () => {
     assert.ok("error" in workspaceUpdate(row(), { action: "nope" }, null));
   });
 
-  it("flips and adds sheets within the limit", () => {
-    assert.deepEqual(workspaceUpdate(row(), { action: "boardPage", page: 2 }, null), { set: { board_page: 2 } });
-    for (const page of [3, -1, 1.5, "1"]) assert.ok("error" in workspaceUpdate(row(), { action: "boardPage", page }, null), String(page));
-    assert.deepEqual(workspaceUpdate(row(), { action: "addBoardPage" }, null), { set: { board_pages: 4, board_page: 3 } });
-    const full = workspaceUpdate(row({ board_pages: MAX_BOARD_PAGES }), { action: "addBoardPage" }, null);
-    assert.ok("error" in full && full.status === 409);
+  it("stores the teacher's board position quietly", () => {
+    assert.deepEqual(workspaceUpdate(row(), { action: "view", part: "board", pos: 12.34567 }, null), { set: { board_pos: 12.3457, board_page: 12 }, quiet: true });
+    for (const pos of [-0.1, MAX_BOARD_BANDS, Number.NaN, "3"]) assert.ok("error" in workspaceUpdate(row(), { action: "view", part: "board", pos }, null), String(pos));
+    assert.ok("error" in workspaceUpdate(row(), { action: "view", part: "chat", pos: 1 }, null));
+  });
+
+  it("stores the position in the current document only", () => {
+    assert.deepEqual(workspaceUpdate(row({ doc_id: DOC }), { action: "view", part: "doc", pos: 1.5 }, ready), { set: {}, docPos: { docId: DOC, pos: 1.5 }, quiet: true });
+    const end = workspaceUpdate(row({ doc_id: DOC }), { action: "view", part: "doc", pos: 3 }, ready);
+    assert.ok("docPos" in end && end.docPos && end.docPos.pos < 3 && end.docPos.pos > 2.99, "the very end stays on the last page");
+    assert.ok("error" in workspaceUpdate(row({ doc_id: DOC }), { action: "view", part: "doc", pos: 3.5 }, ready));
+    assert.ok("error" in workspaceUpdate(row({ doc_id: null }), { action: "view", part: "doc", pos: 0 }, ready));
+    assert.ok("error" in workspaceUpdate(row({ doc_id: DOC }), { action: "view", part: "doc", pos: 0 }, { ...ready, id: "other" }));
+  });
+
+  it("clearing the board resets its extent and position", () => {
+    assert.deepEqual(workspaceUpdate(row({ board_pages: 40, board_pos: 31.5 }), { action: "boardClear" }, null), { set: { board_pos: 0, board_page: 0, board_pages: 1 }, clearBoard: true });
+  });
+
+  it("tabs opened before the scrolling workspace are told to reload", () => {
+    for (const action of ["boardPage", "addBoardPage", "docPage"]) {
+      const result = workspaceUpdate(row({ doc_id: DOC }), { action, page: 1 }, ready);
+      assert.ok("error" in result && result.status === 409 && /перезагрузите/.test(result.error), action);
+    }
   });
 
   it("selects only ready documents and expands the material", () => {
@@ -136,12 +152,6 @@ describe("workspaceUpdate", () => {
     assert.ok("error" in workspaceUpdate(row(), { action: "docSelect", docId: DOC }, { ...ready, status: "uploading" }));
     assert.ok("error" in workspaceUpdate(row(), { action: "docSelect", docId: "other" }, ready));
     assert.ok("error" in workspaceUpdate(row(), { action: "docSelect", docId: DOC }, null));
-  });
-
-  it("pages the current document only", () => {
-    assert.deepEqual(workspaceUpdate(row({ doc_id: DOC }), { action: "docPage", page: 2 }, ready), { set: {}, docPage: { docId: DOC, page: 2 } });
-    assert.ok("error" in workspaceUpdate(row({ doc_id: DOC }), { action: "docPage", page: 3 }, ready));
-    assert.ok("error" in workspaceUpdate(row({ doc_id: null }), { action: "docPage", page: 0 }, ready));
   });
 
   it("closing or deleting the current document clears it", () => {
@@ -153,16 +163,32 @@ describe("workspaceUpdate", () => {
 });
 
 describe("workspace view", () => {
-  it("clamps pages and builds surfaces", () => {
-    const v = toWorkspaceView(row({ board_page: 9, board_pages: 2 }), { ...doc({ page: 7 }), token: "tok" }, [{ id: DOC, name: "x", kind: "pdf", pageCount: 3, createdAt: 1 }]);
-    assert.equal(v.boardPage, 1);
-    assert.equal(v.boardSurface, boardSurface(WS, 1));
-    assert.equal(v.doc?.page, 2);
-    assert.equal(v.doc?.surface, docSurface(DOC, 2));
+  it("reports positions, the bands in use and the material", () => {
+    const v = toWorkspaceView(row({ board_pos: 5.5, board_pages: 9 }), { ...doc({ pos: 2.4 }), token: "tok" }, [{ id: DOC, name: "x", kind: "pdf", pageCount: 3, createdAt: 1 }]);
+    assert.equal(v.boardPos, 5.5);
+    assert.equal(v.boardPages, 9);
+    assert.equal(v.doc?.pos, 2.4);
     assert.deepEqual(v.doc?.pages[2], [900, 1600]);
     assert.equal(v.doc?.token, "tok");
     assert.equal(v.documents?.length, 1);
     assert.equal("documents" in toWorkspaceView(row(), null), false);
+  });
+
+  it("clamps odd stored values", () => {
+    const v = toWorkspaceView(row({ board_pos: 9999, board_pages: 9999 }), { ...doc({ pos: 7 }), token: "t" });
+    assert.ok(v.boardPos < MAX_BOARD_BANDS);
+    assert.equal(v.boardPages, MAX_BOARD_BANDS);
+    assert.ok(v.doc && v.doc.pos < 3 && v.doc.pos > 2.99);
+    assert.equal(toWorkspaceView(row({ board_pos: Number.NaN }), null).boardPos, 0);
+  });
+
+  it("keeps what tabs opened before the scrolling workspace read: the sheet and page under the teacher's position", () => {
+    const v = toWorkspaceView(row({ board_pos: 1.7, board_pages: 3 }), { ...doc({ pos: 2.4 }), token: "t" });
+    assert.equal(v.boardPage, 1);
+    assert.equal(v.boardSurface, boardSurface(WS, 1));
+    assert.equal(v.doc?.page, 2);
+    assert.equal(v.doc?.surface, docSurface(DOC, 2));
+    assert.equal(toWorkspaceView(row({ board_pos: 8.2, board_pages: 3 }), null).boardPage, 2, "beyond the bands in use: the last one");
   });
 
   it("drops a document that is not ready or has broken page sizes", () => {
@@ -189,22 +215,16 @@ describe("workspace view", () => {
 describe("host overlay", () => {
   it("applies a local patch until the server reports its version", () => {
     const server = view();
-    const pending = { patch: { boardPage: 2, docPage: 0, docCollapsed: true }, version: 5 };
+    const pending = { patch: { docCollapsed: true, allDraw: true }, version: 5 };
     const merged = mergeWorkspace(server, pending);
-    assert.equal(merged?.boardPage, 2);
-    assert.equal(merged?.boardSurface, boardSurface(WS, 2));
-    assert.equal(merged?.doc?.surface, docSurface(DOC, 0));
     assert.equal(merged?.docCollapsed, true);
-    assert.equal(mergeWorkspace({ ...server, version: 5 }, pending)?.boardPage, 0);
-    assert.equal(mergeWorkspace(server, { patch: { boardPage: 1 }, version: null })?.boardPage, 1);
+    assert.equal(merged?.allDraw, true);
+    assert.equal(merged?.boardCollapsed, false);
+    assert.equal(mergeWorkspace({ ...server, version: 5 }, pending)?.docCollapsed, false);
+    assert.equal(mergeWorkspace(server, { patch: { open: false }, version: null })?.open, false);
     assert.equal(mergeWorkspace(server, null), server);
     assert.equal(mergeWorkspace(null, pending), null);
-  });
-
-  it("a new sheet patch moves to it", () => {
-    const v = applyWorkspacePatch(view(), { boardPages: 4, boardPage: 3 });
-    assert.equal(v.boardPages, 4);
-    assert.equal(v.boardPage, 3);
+    assert.equal(applyWorkspacePatch(server, {}).open, true);
   });
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useEffectEvent, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { AnnotationToolbar, type ToolbarPicker } from "@/components/annotations/annotation-toolbar";
@@ -19,7 +19,8 @@ import { abortGesture, gestureInput, gestureStep, initialGesture, isTentativeRes
 import { DRAFT_SEND_MS, randomId, type DraftItem } from "@/lib/annotation-drafts";
 import { laserLife, pushLaserPoints } from "@/lib/annotation-laser";
 import { defaultMaxWidth, fitMaxWidth, nearestTextSize, normalizeText, placeTextAnchor, TEXT_LINE_HEIGHT, TEXT_PAD_Y, textFits, textLines, textMetrics } from "@/lib/annotation-text";
-import { defaultToolFor, isCreatingTool, LASER_COLOR, markAnchor, resolveEscape, widthGroup, type HotkeyAction, type PrefsPatch, type ToolbarLayout } from "@/lib/annotation-tools";
+import { defaultToolFor, isCreatingTool, LASER_COLOR, markAnchor, resolveEscape, widthGroup, type HotkeyAction, type PrefsPatch, type TextSize, type ToolbarLayout } from "@/lib/annotation-tools";
+import { edgeExit, type EdgeExit } from "@/lib/scroll-strip";
 import type { AnnotationStore, BoardItem } from "@/lib/annotation-sync";
 import type { AnnotationKind, AnnotationPayload, LaserStyle, Point, UiTool } from "@/lib/confa-types";
 
@@ -39,11 +40,36 @@ type Props = {
   label?: string; // the svg's accessible name
   onToolChange?: (tool: UiTool) => void;
   onNotice?: (text: string, id: string) => void; // the layer's own notices (PiP: sonner toasts would land in the hidden opener)
+  // A tile of the workspace's strips: no toolbar, hotkeys or dialog of its own; the workspace drives it through `handle`.
+  color?: string; // ink for new marks instead of prefs.color (white paper has its own)
+  tone?: "dark" | "light"; // what the marks lie on: light paper gets a dark hover highlight
+  handle?: Ref<LayerHandle>;
+  onEditing?: (style: { color: string; size: TextSize } | null) => void; // the open text editor's look, for the toolbar
+  // A pen, laser or eraser stroke left through the top or bottom edge. A neighbouring layer that takes it over returns the
+  // relay this layer forwards the pointer's further events to (the pointer capture stays here).
+  onEdge?: (handoff: EdgeHandoff) => PointerRelay | null;
+};
+
+// A pointer event reduced to what a stroke needs, so one layer can pass a pointer on to another.
+export type PointerInput = { pointerId: number; pointerType: string; clientX: number; clientY: number; buttons: number; shiftKey: boolean; samples: ReadonlyArray<{ clientX: number; clientY: number }> };
+type StrokeSpec = { type: "draw"; kind: AnnotationKind; color: string; strokeWidth: number } | { type: "laser"; style: LaserStyle; color: string; strokeWidth?: number } | { type: "erase"; radius: number };
+// x, y: the point on the edge (client px); next: the input that crossed it, with the samples beyond the edge.
+export type EdgeHandoff = { edge: EdgeExit["edge"]; x: number; y: number; pointerId: number; pointerType: string; tentative: boolean; start: TentativeSample; spec: StrokeSpec; next: PointerInput };
+export type PointerRelay = { move(input: PointerInput): void; up(input: PointerInput): void; cancel(): void };
+export type LayerHandle = {
+  commitText(): boolean; // false: the open text stays open (too long for its place)
+  cancelStroke(): boolean; // true: there was a gesture to cancel
+  busy(): boolean; // a stroke, a relayed pointer or an open text: the tile must stay mounted
+  restyle(patch: PrefsPatch): void; // the toolbar's colour and size, for the open text
+  count(): number; // saved marks on this surface
+  pointer: { adopt(handoff: EdgeHandoff): boolean; move(input: PointerInput): void; up(input: PointerInput): void; cancel(pointerId: number): void };
 };
 
 // One pointer gesture at a time, kept in a ref so handlers never see a stale closure.
 // A finger stays tentative (not drawn, not sent) until it lasts TENTATIVE_MS or moves TENTATIVE_PX, so a pinch never flashes a mark.
-type StrokeBase = { pointerId: number; pointer: PointerKind; start: TentativeSample; tentative: boolean; timer: number | null };
+// at: the pointer's last position (client px), to see where it leaves the layer.
+type StrokeBase = { pointerId: number; pointer: PointerKind; start: TentativeSample; tentative: boolean; timer: number | null; at: { x: number; y: number } };
+type StrokeEnd = { end: Point; rect: Rect; shiftKey: boolean; clientX: number; clientY: number; before?: Point[]; exact?: boolean };
 type Stroke = StrokeBase & (
   | { type: "draw"; id: string; kind: AnnotationKind; color: string; strokeWidth: number; origin: Point; points: Point[]; sent: boolean; end: Point; aspect: number } // end, aspect: the last pointer sample, re-constrained when Shift changes
   | { type: "laser"; id: string; style: LaserStyle; color: string; strokeWidth?: number; points: Point[]; sent: boolean; trail: DraftItem | null }
@@ -107,10 +133,15 @@ function createLiveStore(): LiveStore {
   };
 }
 
-function samplesOf(event: ReactPointerEvent<SVGSVGElement>, rect: Rect): Point[] {
+function inputOf(event: ReactPointerEvent<SVGSVGElement>): PointerInput {
   const native = event.nativeEvent;
   const coalesced = typeof native.getCoalescedEvents === "function" ? native.getCoalescedEvents() : [];
-  return (coalesced.length ? coalesced : [native]).map((sample) => normFromClient(sample.clientX, sample.clientY, rect));
+  const samples = (coalesced.length ? coalesced : [native]).map((sample) => ({ clientX: sample.clientX, clientY: sample.clientY }));
+  return { pointerId: event.pointerId, pointerType: event.pointerType, clientX: event.clientX, clientY: event.clientY, buttons: event.buttons, shiftKey: event.shiftKey, samples };
+}
+
+function pointsOf(samples: PointerInput["samples"], rect: Rect): Point[] {
+  return samples.map((sample) => normFromClient(sample.clientX, sample.clientY, rect));
 }
 
 function shifted(item: HitItem, dx: number, dy: number): HitItem | null {
@@ -209,10 +240,10 @@ const Lasers = memo(function Lasers({ store, live, box, win, selfId, scale }: { 
   return <LaserLayer items={remote} local={local} box={box} win={win} selfId={selfId} scale={scale} nameOf={store.nameOf} onIdle={onIdle} />;
 });
 
-const HoverHighlight = memo(function HoverHighlight({ live, byId, box, scale }: { live: LiveStore; byId: ReadonlyMap<string, BoardItem>; box: Size; scale: number }) {
+const HoverHighlight = memo(function HoverHighlight({ live, byId, box, scale, tone }: { live: LiveStore; byId: ReadonlyMap<string, BoardItem>; box: Size; scale: number; tone: "dark" | "light" }) {
   const hoverId = useSyncExternalStore(live.subscribe, live.hoverId, live.hoverId);
   const item = hoverId ? byId.get(hoverId) : undefined;
-  return item ? renderHighlight(item, box, scale) : null;
+  return item ? renderHighlight(item, box, scale, tone) : null;
 });
 
 const HoverChip = memo(function HoverChip({ live, byId, box, scale, nameOf }: { live: LiveStore; byId: ReadonlyMap<string, BoardItem>; box: Size; scale: number; nameOf: NameOf }) {
@@ -227,7 +258,7 @@ const AuthorChips = memo(function AuthorChips({ store, items, live, box, scale, 
   return <g>{items.map((item) => hiddenIds.has(item.id) || item.id === dragged || item.id === editingId ? null : <MarkChip key={item.id} item={item} box={box} scale={scale} nameOf={store.nameOf} />)}</g>;
 });
 
-export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, toolbar, portalContainer, showSavedAuthors, toolKey, hotkeysEnabled = true, label = "Пометки поверх демонстрации", onToolChange, onNotice }: Props) {
+export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, toolbar, portalContainer, showSavedAuthors, toolKey, hotkeysEnabled = true, label = "Пометки поверх демонстрации", onToolChange, onNotice, color, tone = "dark", handle, onEditing, onEdge }: Props) {
   const [prefs, updatePrefs] = useAnnotationPrefs();
   const [armed, setArmed] = useArmedTool(toolKey ?? shareId, defaultToolFor({ armedByDefault, coarse, lastDrawTool: prefs.lastDrawTool }));
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
@@ -245,6 +276,8 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   const closedEditor = useRef<string | null>(null); // key of the editor already saved or cancelled (blur can follow Enter)
   const suppressClick = useRef(false); // the pointerdown that saved the open text must not open a new one
   const lastTap = useRef<{ id: string; t: number } | null>(null);
+  const relayRef = useRef<{ pointerId: number; sink: PointerRelay } | null>(null); // a stroke another layer took over at an edge
+  const ink = color ?? prefs.color;
   const actions = sync.actions;
   const permitted = canDraw && Boolean(actions);
   // The store still holds the previous page (its snapshot is on the way): writes would go there, so nothing draws yet.
@@ -345,6 +378,9 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
 
   // The single cancel path: arbiter gesture, pointercancel, lost capture without pointerup, hidden page, unmount, revoke, Esc.
   function cancelStroke() {
+    const relay = relayRef.current;
+    relayRef.current = null;
+    relay?.sink.cancel();
     gestureRef.current = abortGesture(gestureRef.current);
     dropStroke();
   }
@@ -377,7 +413,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     if (textPx * scale < READABLE_TEXT_PX && textPx > 0) frame.ensureScale(READABLE_TEXT_PX / textPx, point);
     const maxWidth = fitMaxWidth(point[0], defaultMaxWidth(size, textPx));
     const anchor = placeTextAnchor(point, { w: maxWidth, h: (TEXT_LINE_HEIGHT + 2 * TEXT_PAD_Y) * textPx / Math.max(1, size.height) });
-    showEditor({ key: randomId(), point: anchor, color: prefs.color, fontSize: units, maxWidth, text: "" });
+    showEditor({ key: randomId(), point: anchor, color: ink, fontSize: units, maxWidth, text: "" });
   }
 
   function openEdit(item: BoardItem) {
@@ -436,6 +472,10 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   // Toolbar colour and size also restyle the open editor; a new text re-fits its width to the size.
   function changePrefs(patch: PrefsPatch) {
     updatePrefs(patch);
+    restyle(patch);
+  }
+
+  function restyle(patch: PrefsPatch) {
     if (!editing || (patch.color === undefined && patch.textSize === undefined)) return;
     const next = { ...editing };
     if (patch.color !== undefined) next.color = patch.color;
@@ -472,7 +512,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     }
     const rect = svg.getBoundingClientRect();
     const point = normFromClient(event.clientX, event.clientY, rect);
-    const base: StrokeBase = { pointerId: event.pointerId, pointer: kind, start: { t: now(), x: event.clientX, y: event.clientY }, tentative: startsTentative(kind), timer: null };
+    const base: StrokeBase = { pointerId: event.pointerId, pointer: kind, start: { t: now(), x: event.clientX, y: event.clientY }, tentative: startsTentative(kind), timer: null, at: { x: event.clientX, y: event.clientY } };
     let stroke: Stroke;
     if (tool === "eraser") stroke = { ...base, type: "erase", gesture: randomId(), last: point, radius: hitRadiusFor(event.pointerType), queued: [] };
     else if (tool === "move") {
@@ -482,22 +522,61 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       if (!item) return false;
       stroke = { ...base, type: "drag", id: item.id, draftId: randomId(), kind: item.kind, data: item.data, origin: point, moved: item.data, dx: 0, dy: 0, sent: false };
     } else if (tool === "laser") {
-      const ink = prefs.laserStyle === "ink";
-      stroke = { ...base, type: "laser", id: randomId(), style: prefs.laserStyle, color: ink ? prefs.color : LASER_COLOR, strokeWidth: ink ? prefs.widths.pen : undefined, points: [point], sent: false, trail: null };
-    } else if (isCreatingTool(tool)) stroke = { ...base, type: "draw", id: randomId(), kind: tool, color: prefs.color, strokeWidth: prefs.widths[widthGroup(tool) ?? "pen"], origin: point, points: [point], sent: false, end: point, aspect: rect.width / rect.height };
+      const vanishing = prefs.laserStyle === "ink";
+      stroke = { ...base, type: "laser", id: randomId(), style: prefs.laserStyle, color: vanishing ? ink : LASER_COLOR, strokeWidth: vanishing ? prefs.widths.pen : undefined, points: [point], sent: false, trail: null };
+    } else if (isCreatingTool(tool)) stroke = { ...base, type: "draw", id: randomId(), kind: tool, color: ink, strokeWidth: prefs.widths[widthGroup(tool) ?? "pen"], origin: point, points: [point], sent: false, end: point, aspect: rect.width / rect.height };
     else return false;
-    strokeRef.current = stroke;
     capture(svg, event.pointerId);
+    begin(stroke, point, rect);
+    return true;
+  }
+
+  // The stroke is now the layer's gesture: shown at once, or once a finger has proved it is not the start of a pinch.
+  function begin(stroke: Stroke, point: Point, rect: Rect) {
+    strokeRef.current = stroke;
     live.set({ hoverId: null });
     if (stroke.type === "erase") eraseAlong(stroke, [point], rect);
     if (!stroke.tentative) reveal(stroke);
     else if (win) {
-      const pending = stroke;
-      pending.timer = win.setTimeout(() => {
-        pending.timer = null;
-        if (strokeRef.current === pending && pending.tentative) reveal(pending);
+      stroke.timer = win.setTimeout(() => {
+        stroke.timer = null;
+        if (strokeRef.current === stroke && stroke.tentative) reveal(stroke);
       }, TENTATIVE_MS);
     }
+  }
+
+  // Takes over a stroke that left the neighbouring band through the shared edge: it goes on here from the edge point as a new
+  // mark. The pointer stays captured by the layer it started on, which relays its events (pointer.move / up / cancel).
+  function adopt(handoff: EdgeHandoff): boolean {
+    if (!drawing || !actions || !svgEl || strokeRef.current || editing) return false;
+    const rect = svgEl.getBoundingClientRect();
+    const point = normFromClient(handoff.x, handoff.y, rect);
+    const base: StrokeBase = { pointerId: handoff.pointerId, pointer: pointerKind(handoff.pointerType), start: handoff.start, tentative: handoff.tentative, timer: null, at: { x: handoff.x, y: handoff.y } };
+    const { spec } = handoff;
+    const stroke: Stroke = spec.type === "erase" ? { ...base, type: "erase", gesture: randomId(), last: point, radius: spec.radius, queued: [] }
+      : spec.type === "laser" ? { ...base, type: "laser", id: randomId(), style: spec.style, color: spec.color, strokeWidth: spec.strokeWidth, points: [point], sent: false, trail: null }
+        : { ...base, type: "draw", id: randomId(), kind: spec.kind, color: spec.color, strokeWidth: spec.strokeWidth, origin: point, points: [point], sent: false, end: point, aspect: rect.width / rect.height };
+    begin(stroke, point, rect);
+    return true;
+  }
+
+  // A pen, laser or eraser stroke crossed the top or bottom edge: if the layer beyond takes it over, this one ends its part
+  // exactly on the edge (a still tentative finger just lets go, nothing was shown) and relays the pointer from now on.
+  function handOff(stroke: Stroke, exit: EdgeExit, input: PointerInput, rect: DOMRect, dom: boolean): boolean {
+    if (!onEdge || stroke.type === "drag" || (stroke.type === "draw" && !isFreehand(stroke.kind))) return false;
+    const beyond = (y: number) => exit.edge === "bottom" ? y > rect.bottom : y < rect.top;
+    const cut = input.samples.findIndex((sample) => beyond(sample.clientY));
+    const rest = cut < 0 ? [] : input.samples.slice(cut);
+    const spec: StrokeSpec = stroke.type === "draw" ? { type: "draw", kind: stroke.kind, color: stroke.color, strokeWidth: stroke.strokeWidth }
+      : stroke.type === "laser" ? { type: "laser", style: stroke.style, color: stroke.color, strokeWidth: stroke.strokeWidth } : { type: "erase", radius: stroke.radius };
+    const next: PointerInput = { ...input, samples: rest.length ? rest : [{ clientX: input.clientX, clientY: input.clientY }] };
+    const sink = onEdge({ edge: exit.edge, x: exit.x, y: exit.y, pointerId: stroke.pointerId, pointerType: input.pointerType, tentative: stroke.tentative, start: stroke.start, spec, next });
+    if (!sink) return false;
+    if (stroke.tentative) {
+      strokeRef.current = null;
+      stopTimer(stroke);
+    } else endStroke(stroke, { end: normFromClient(exit.x, exit.y, rect), rect, shiftKey: input.shiftKey, clientX: exit.x, clientY: exit.y, before: pointsOf(cut < 0 ? input.samples : input.samples.slice(0, cut), rect), exact: true });
+    if (dom) relayRef.current = { pointerId: stroke.pointerId, sink };
     return true;
   }
 
@@ -505,6 +584,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     // The zoom arbiter took this pointer for a pan or pinch (it prevents the default of every pointerdown it takes in draw mode).
     if (frame.zoomable && event.nativeEvent.defaultPrevented) return;
     suppressClick.current = false;
+    relayRef.current = null; // a relay whose pointerup was lost
     if (!frame.zoomable) {
       // Two fingers never draw; a pen beats the palm (lib/annotation-gesture).
       const { state, effect } = gestureStep(gestureRef.current, gestureInput("down", event, now()));
@@ -533,6 +613,11 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   }
 
   function move(event: ReactPointerEvent<SVGSVGElement>) {
+    const relay = relayRef.current;
+    if (relay && relay.pointerId === event.pointerId) {
+      relay.sink.move(inputOf(event));
+      return;
+    }
     const stroke = strokeRef.current;
     let extend = Boolean(stroke && stroke.pointerId === event.pointerId);
     if (!frame.zoomable) {
@@ -549,8 +634,22 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       hover(event);
       return;
     }
-    const rect = event.currentTarget.getBoundingClientRect();
-    const samples = samplesOf(event, rect);
+    moveStroke(inputOf(event), true);
+  }
+
+  // Extends the layer's stroke with a pointer move: its own event (dom), or one relayed from the layer that holds the capture.
+  function moveStroke(input: PointerInput, dom: boolean) {
+    const stroke = strokeRef.current;
+    if (!stroke || stroke.pointerId !== input.pointerId || !svgEl) return;
+    if (!dom && stroke.pointer !== "touch" && input.buttons === 0) {
+      dropStroke();
+      return;
+    }
+    const rect = svgEl.getBoundingClientRect();
+    const exit = onEdge ? edgeExit(stroke.at, { x: input.clientX, y: input.clientY }, { top: rect.top, bottom: rect.bottom }) : null;
+    stroke.at = { x: input.clientX, y: input.clientY };
+    if (exit && handOff(stroke, exit, input, rect, dom)) return;
+    const samples = pointsOf(input.samples, rect);
     const last = samples[samples.length - 1];
     let added = 0;
     let changed = true;
@@ -571,10 +670,10 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     } else {
       stroke.end = last;
       stroke.aspect = rect.width / rect.height;
-      stroke.points = [stroke.origin, constrainEnd(stroke.kind, stroke.origin, last, stroke.aspect, event.shiftKey)];
+      stroke.points = [stroke.origin, constrainEnd(stroke.kind, stroke.origin, last, stroke.aspect, input.shiftKey)];
     }
     if (stroke.tentative) {
-      if (isTentativeResolved(stroke.start, { t: now(), x: event.clientX, y: event.clientY })) reveal(stroke);
+      if (isTentativeResolved(stroke.start, { t: now(), x: input.clientX, y: input.clientY })) reveal(stroke);
       return;
     }
     if (!changed || stroke.type === "erase") return;
@@ -601,20 +700,20 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   }
 
   // Draft end, the pending add/move and clearing the preview happen in this one handler, so they land in one commit.
-  function finishStroke(stroke: Stroke, event: ReactPointerEvent<SVGSVGElement>) {
+  // `before` and `exact`: a stroke handed over at an edge ends with these samples and then exactly on the edge point.
+  function endStroke(stroke: Stroke, { end, rect, shiftKey, clientX, clientY, before, exact }: StrokeEnd) {
     strokeRef.current = null;
     stopTimer(stroke);
     svgEl?.removeAttribute("data-annotating");
-    const rect = event.currentTarget.getBoundingClientRect();
-    const end = normFromClient(event.clientX, event.clientY, rect);
     if (stroke.type === "erase") {
+      if (exact) eraseAlong(stroke, [...(before ?? []), end], rect);
       if (stroke.queued.length) actions?.erase(stroke.queued, stroke.gesture);
       void actions?.flushErase();
       return;
     }
     if (stroke.type === "drag") {
       // A finger or stylus that barely moved tapped: no move, and two taps on a text open it.
-      const tap = stroke.pointer !== "mouse" && Math.hypot(event.clientX - stroke.start.x, event.clientY - stroke.start.y) < CLICK_PX;
+      const tap = stroke.pointer !== "mouse" && Math.hypot(clientX - stroke.start.x, clientY - stroke.start.y) < CLICK_PX;
       const moved = tap ? null : translateAnnotation(stroke.data, end[0] - stroke.origin[0], end[1] - stroke.origin[1]);
       if (moved && (moved.dx || moved.dy)) {
         if (stroke.sent) actions?.draft.end(stroke.draftId, { dx: moved.dx, dy: moved.dy });
@@ -624,8 +723,14 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       if (tap && stroke.kind === "text") tapText(stroke.id);
       return;
     }
+    if (exact) {
+      // The part before the edge, then the edge point itself, whatever the distance filter would say.
+      if (before?.length) pushFiltered(stroke.points, before, rect);
+      const tail = stroke.points[stroke.points.length - 1];
+      if (!tail || tail[0] !== end[0] || tail[1] !== end[1]) stroke.points.push(end);
+    }
     if (stroke.type === "laser") {
-      if (stroke.sent) actions?.draft.end(stroke.id, stroke.style === "ink" ? { points: finalizeFreehand(stroke.points, aspect) } : undefined);
+      if (stroke.sent) actions?.draft.end(stroke.id, stroke.style === "ink" ? { points: finalizeFreehand(stroke.points, aspect) } : exact ? { points: stroke.points } : undefined);
       if (stroke.trail) {
         const t = now();
         live.set({ lasers: withTrail(live.lasers(), { ...stroke.trail, phase: "ended", endedAt: t }, t) });
@@ -634,10 +739,10 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     }
     let points: Point[] | null = null;
     if (isFreehand(stroke.kind)) {
-      pushFiltered(stroke.points, [end], rect);
+      if (!exact) pushFiltered(stroke.points, [end], rect);
       points = finalizeFreehand(stroke.points, aspect);
     } else {
-      const target = constrainEnd(stroke.kind, stroke.origin, end, rect.width / rect.height, event.shiftKey);
+      const target = constrainEnd(stroke.kind, stroke.origin, end, rect.width / rect.height, shiftKey);
       if (!isDegenerate(stroke.kind, stroke.origin, target, rect)) points = [roundPoint(stroke.origin), roundPoint(target)];
     }
     if (points && points.length >= 2 && actions) {
@@ -647,18 +752,37 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     live.set({ mark: null });
   }
 
-  function up(event: ReactPointerEvent<SVGSVGElement>) {
+  // The pointer lifted: the layer's own pointerup, or one relayed to the layer that took the stroke over.
+  function upStroke(input: PointerInput) {
     const stroke = strokeRef.current;
+    if (!stroke || stroke.pointerId !== input.pointerId || !svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    endStroke(stroke, { end: normFromClient(input.clientX, input.clientY, rect), rect, shiftKey: input.shiftKey, clientX: input.clientX, clientY: input.clientY });
+  }
+
+  function up(event: ReactPointerEvent<SVGSVGElement>) {
+    const relay = relayRef.current;
+    if (relay && relay.pointerId === event.pointerId) {
+      relayRef.current = null;
+      relay.sink.up(inputOf(event));
+      return;
+    }
     if (!frame.zoomable) {
       const { state, effect } = gestureStep(gestureRef.current, gestureInput("up", event, now()));
       gestureRef.current = state;
       if (effect !== "finish") return;
     }
-    if (stroke && stroke.pointerId === event.pointerId) finishStroke(stroke, event);
+    upStroke(inputOf(event));
   }
 
   // pointercancel, or capture lost without a pointerup (another gesture took over, the element went away): never commit.
   function abandon(event: ReactPointerEvent<SVGSVGElement>) {
+    const relay = relayRef.current;
+    if (relay && relay.pointerId === event.pointerId) {
+      relayRef.current = null;
+      relay.sink.cancel();
+      return;
+    }
     if (!frame.zoomable) {
       const { state, effect } = gestureStep(gestureRef.current, gestureInput("cancel", event, now()));
       gestureRef.current = state;
@@ -726,6 +850,35 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
 
   useAnnotationHotkeys({ win, enabled: active && ready && hotkeysEnabled, onAction: onHotkey });
 
+  // Rebuilt on every render, so the workspace always drives the current state.
+  useImperativeHandle(handle, () => ({
+    commitText: () => commitText(),
+    cancelStroke() {
+      const had = Boolean(strokeRef.current || relayRef.current);
+      cancelStroke();
+      return had;
+    },
+    busy: () => Boolean(strokeRef.current || relayRef.current || editing),
+    restyle,
+    count: () => sync.store.getBoard().items.length,
+    pointer: {
+      adopt,
+      move: (input) => moveStroke(input, false),
+      up: upStroke,
+      cancel(pointerId) {
+        if (strokeRef.current?.pointerId === pointerId) dropStroke();
+      },
+    },
+  }));
+
+  const editingColor = editing?.color ?? null, editingSize = editing ? nearestTextSize(editing.fontSize) : null;
+  const reportEditing = useEffectEvent((style: { color: string; size: TextSize } | null) => onEditing?.(style));
+  useEffect(() => {
+    if (editingColor === null || editingSize === null) return;
+    reportEditing({ color: editingColor, size: editingSize });
+    return () => reportEditing(null);
+  }, [editingColor, editingSize]);
+
   const onHidden = useEffectEvent(cancelStroke);
   const onArbiterGesture = useEffectEvent(cancelStroke);
   // A second finger outside the svg (letterbox, toolbar, participants strip) is still a pinch: drop the finger's stroke.
@@ -784,7 +937,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   return <>
     <svg ref={setSvgEl} aria-label={label} className={`absolute inset-0 h-full w-full select-none ${drawing ? "touch-none" : ""}`} viewBox={`0 0 ${Math.max(1, size.width)} ${Math.max(1, size.height)}`} preserveAspectRatio="none" style={{ pointerEvents: drawing ? "auto" : "none", cursor }} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={abandon} onLostPointerCapture={abandon} onPointerLeave={() => { if (live.hoverId()) live.set({ hoverId: null }, win); }} onMouseDown={(event) => { if (editing) event.preventDefault(); }} onClick={click} onDoubleClick={doubleClick}>
       {ready && <>
-        <HoverHighlight live={live} byId={byId} box={size} scale={scale} />
+        <HoverHighlight live={live} byId={byId} box={size} scale={scale} tone={tone} />
         <CommittedLayer store={sync.store} items={items} live={live} box={size} editingId={editingId} />
         {showAuthors && <AuthorChips store={sync.store} items={items} live={live} box={size} scale={scale} editingId={editingId} />}
         {!showAuthors && <HoverChip live={live} byId={byId} box={size} scale={scale} nameOf={sync.store.nameOf} />}

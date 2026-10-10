@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type DragEvent } from "react";
+import { useImperativeHandle, useMemo, useRef, useState, type DragEvent, type Ref } from "react";
 import { Check, FileText, FolderOpen, LoaderCircle, Trash, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AnnotationLayer } from "@/components/annotations/annotation-layer";
-import { ZoomFrame } from "@/components/zoom-frame";
-import { CollapseButton, headerButton, PageNav, PaneShell, type Orientation, type PaneDrawing, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
+import { ScrollStripView, SurfaceLayer, type StripApi } from "@/components/workspace/scroll-strip-view";
+import { CollapseButton, headerButton, PageJump, PaneShell, type Orientation, type PaneApi, type PaneDrawing, type PaneEditing, type PaneFollow, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
 import type { MaterialUpload } from "@/hooks/use-material-upload";
+import { stripLayout } from "@/lib/scroll-strip";
+import { DOC_GAP, docSurface } from "@/lib/workspace";
 import type { WorkspaceDoc, WorkspaceView } from "@/lib/confa-types";
 
 const ACCEPT = ".pdf,.pptx,.ppt,.odp,.docx,.doc,.odt,.rtf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp";
@@ -17,24 +18,24 @@ function pageUrl(roomId: string, doc: Pick<WorkspaceDoc, "id" | "token">, page: 
   return `/api/rooms/${roomId}/documents/${doc.id}/pages/${page}?t=${encodeURIComponent(doc.token)}`;
 }
 
-// The current page as a plain image (the signed link caches for a day); the next page is fetched ahead.
-function PageImage({ roomId, doc }: { roomId: string; doc: WorkspaceDoc }) {
-  const src = pageUrl(roomId, doc, doc.page);
+// A page as a plain image (the signed link caches for a day). Only pages near the viewport are mounted, the rest are blank
+// sheets with their number, so a long material never loads all at once.
+function PageImage({ roomId, doc, page }: { roomId: string; doc: WorkspaceDoc; page: number }) {
+  const src = pageUrl(roomId, doc, page);
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
-  const { id, token, page, pageCount } = doc;
-  useEffect(() => {
-    if (page + 1 >= pageCount) return;
-    const next = new Image();
-    next.decoding = "async";
-    next.src = pageUrl(roomId, { id, token }, page + 1);
-  }, [roomId, id, token, page, pageCount]);
   return <>
     {/* eslint-disable-next-line @next/next/no-img-element -- a signed, private page image */}
-    <img key={src} src={src} alt="" draggable={false} decoding="async" onLoad={() => setLoaded(src)} onError={() => setFailed(src)} className="pointer-events-none absolute inset-0 h-full w-full select-none object-fill" />
-    {loaded !== src && failed !== src && <div className="absolute inset-0 grid place-items-center bg-white"><LoaderCircle className="size-6 animate-spin text-slate-400" /></div>}
+    <img key={src} src={src} alt="" draggable={false} decoding="async" onLoad={() => setLoaded(src)} onError={() => setFailed(src)} className="pointer-events-none absolute inset-0 h-full w-full select-none bg-white object-fill" />
+    {loaded !== src && failed !== src && <BlankPage page={page} busy />}
     {failed === src && <div className="absolute inset-0 grid place-items-center bg-white p-4 text-center text-sm text-slate-500">Не удалось загрузить страницу</div>}
   </>;
+}
+
+function BlankPage({ page, busy = false }: { page: number; busy?: boolean }) {
+  return <div className="absolute inset-0 grid place-items-center bg-white text-slate-300">
+    {busy ? <LoaderCircle className="size-6 animate-spin text-slate-400" /> : <span className="text-2xl font-semibold tabular-nums">{page + 1}</span>}
+  </div>;
 }
 
 function uploadText(upload: MaterialUpload): string {
@@ -86,19 +87,31 @@ type Props = {
   roomId: string;
   layer: WorkspaceLayerProps;
   drawing: PaneDrawing;
+  follow: PaneFollow;
   highlight: boolean;
   orientation: Orientation;
   host: WorkspaceHostActions | null;
   upload: MaterialUpload | null;
+  api?: Ref<PaneApi>;
   onActivate: (part: WorkspacePart) => void;
+  onEditing: PaneEditing;
 };
 
-export function DocumentPane({ view, roomId, layer, drawing, highlight, orientation, host, upload, onActivate }: Props) {
+// The material: all its pages in one column that the teacher scrolls (wheel, drag, scrollbar, keys) or jumps through by page number.
+export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, orientation, host, upload, api, onActivate, onEditing }: Props) {
   const doc = view.doc;
   const fileInput = useRef<HTMLInputElement>(null);
+  const strip = useRef<StripApi>(null);
   const [dragging, setDragging] = useState(false);
+  const [reading, setReading] = useState({ doc: doc?.id ?? null, page: 0 }); // the page at the reading line, for «3 / 12»
   const pick = () => fileInput.current?.click();
-  const page = doc?.pages[doc.page];
+  const pages = doc?.pages;
+  const layout = useMemo(() => stripLayout((pages ?? []).map(([width, height]) => width / height), DOC_GAP), [pages]);
+  const widest = pages?.reduce((max, [width]) => Math.max(max, width), 0) ?? 0;
+  const first = pages?.[0];
+  const firstAspect = first ? first[0] / first[1] : 1;
+  const page = reading.doc === doc?.id ? Math.min(reading.page, (doc?.pageCount ?? 1) - 1) : Math.floor(doc?.pos ?? 0);
+  useImperativeHandle(api, () => ({ get strip() { return strip.current; }, current: () => page }), [page]);
   const dropProps = host ? {
     onDragOver(event: DragEvent) {
       if (!event.dataTransfer.types.includes("Files")) return;
@@ -116,7 +129,7 @@ export function DocumentPane({ view, roomId, layer, drawing, highlight, orientat
     },
   } : undefined;
   const controls = <>
-    {doc && <PageNav label="Стр." page={doc.page} count={doc.pageCount} onFlip={host ? (next) => host.flip("doc", next) : undefined} />}
+    {doc && <PageJump page={page} count={doc.pageCount} onJump={host ? (next) => strip.current?.scrollTo(next, true) : undefined} />}
     {host && <MaterialsMenu view={view} host={host} busy={Boolean(upload)} onPick={pick} />}
     {host && <CollapseButton part="doc" orientation={orientation} onClick={() => host.collapse("doc", true)} />}
   </>;
@@ -126,12 +139,17 @@ export function DocumentPane({ view, roomId, layer, drawing, highlight, orientat
       event.target.value = "";
       if (file) host.uploadFile(file);
     }} />}
-    {doc && page ? <ZoomFrame frame={{ width: page[0], height: page[1] }} frameless zoomable interaction={drawing.interaction} fingersDraw={drawing.fingersDraw} resetKey={doc.surface} zoomLabel="Масштаб материала" frameClassName="bg-white" media={<PageImage roomId={roomId} doc={doc} />}>
-      <AnnotationLayer key={doc.surface} {...layer} shareId={doc.surface} toolKey={drawing.toolKey} toolbar={drawing.active ? drawing.toolbar : undefined} hotkeysEnabled={drawing.active} label="Пометки на материале" />
-    </ZoomFrame> : host && <div className="flex h-full flex-col items-center justify-center gap-3 overflow-y-auto p-6 text-center">
+    {doc && pages ? <ScrollStripView api={strip} layout={layout} pixelWidth={widest} resetKey={doc.id} fitAspect={firstAspect >= 1 ? firstAspect : null} host={Boolean(host)} start={doc.pos} target={follow.target} onView={follow.report}
+      interaction={drawing.interaction} fingersDraw={drawing.fingersDraw} penOnly={drawing.penOnly} onPenOnlyChange={drawing.onPenOnlyChange} zoomLabel="Масштаб материала"
+      onTile={(index) => setReading({ doc: doc.id, page: Math.max(0, index) })} scrollLabel={(position) => `Стр. ${Math.min(doc.pageCount, Math.floor(position) + 1)}`}
+      placeholder={(index) => <BlankPage page={index} />}
+      tile={(index, slot) => <>
+        <PageImage roomId={roomId} doc={doc} page={index} />
+        <SurfaceLayer hub={layer.hub} id={docSurface(doc.id, index)} slot={slot} selfId={layer.selfId} canDraw={layer.canDraw} canModerate={layer.canModerate} armedByDefault={layer.armedByDefault} coarse={layer.coarse} toolKey={drawing.toolKey} color={drawing.color} label={`Пометки на странице ${index + 1}`} onEditing={(style) => onEditing("doc", style)} />
+      </>} /> : host && <div className="flex h-full flex-col items-center justify-center gap-3 overflow-y-auto p-6 text-center">
       <span className="grid size-12 shrink-0 place-items-center rounded-full bg-[#6de7d4]/15 text-[#9af4e7]"><Upload size={22} /></span>
       <p className="text-sm font-medium">Перетащите сюда PDF, PowerPoint, Word или картинку</p>
-      <p className="max-w-xs text-xs leading-relaxed text-slate-400">До 100 страниц. Ученики видят ту же страницу, что и вы, и могут приближать её.</p>
+      <p className="max-w-xs text-xs leading-relaxed text-slate-400">До 100 страниц. Вы прокручиваете материал — ученики видят то же место и могут приближать его.</p>
       <Button type="button" disabled={Boolean(upload)} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]" onClick={pick}>Выбрать файл</Button>
       {(view.documents?.length ?? 0) > 0 && <p className="text-xs text-slate-400">Или откройте загруженный в меню «Материалы»</p>}
     </div>}

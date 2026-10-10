@@ -1,10 +1,15 @@
-import type { Annotation, DocumentKind, Role, RoomState, WorkspaceDocument, WorkspaceView } from "@/lib/confa-types";
+import type { DocumentKind, Role, RoomState, WorkspaceDocument, WorkspaceView } from "@/lib/confa-types";
 import { EMPTY_CONTEXT, type SyncContext } from "./annotation-sync.ts";
 
-// The teacher's workspace: a board with sheets and a material (PDF, images, office files rendered to page images).
-// Every board sheet and every document page is an annotation surface: its id is the annotations.share_id of its marks.
+// The teacher's workspace: an endless white board and a material (PDF, images, office files rendered to page images), each a
+// column the teacher scrolls (lib/scroll-strip). The board is cut into 16:9 bands; every band and every material page is an
+// annotation surface: its id is the annotations.share_id of its marks.
 
-export const MAX_BOARD_PAGES = 50;
+export const MAX_BOARD_BANDS = 200;
+export const BOARD_ASPECT = 16 / 9;
+export const BOARD_GRID_COLUMNS = 32; // 18 rows to a band, so the grid runs unbroken across bands
+export const STUDENT_REACH_BANDS = 4; // below the top of the teacher's window: what a tall, narrow window shows
+export const DOC_GAP = 0.012; // between material pages, in strip widths
 export const MAX_DOC_PAGES = 100;
 export const MAX_ROOM_DOCS = 20;
 export const MAX_PAGE_BYTES = 4 * 1024 * 1024;
@@ -18,8 +23,7 @@ export const MAX_PAGE_SIDE = 10_000;
 export const MAX_DOC_NAME = 120;
 export const UPLOAD_STALE_MS = 3600_000; // an upload that never finished stops counting and is purged
 export const DOC_TOKEN_WINDOW_S = 6 * 3600;
-// Virtual size of a board sheet: 16:9, and enough pixels that zoom has room (maxScaleFor).
-export const BOARD_FRAME = { width: 3200, height: 1800 } as const;
+export const BOARD_PIXEL_WIDTH = 3200; // what the board counts as its native width (the zoom limit, maxScaleFor)
 export const IMAGE_TYPES = ["image/webp", "image/jpeg", "image/png"] as const;
 export const OFFICE_EXTENSIONS = ["pptx", "ppt", "odp", "docx", "doc", "odt", "rtf"] as const;
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "webp"] as const;
@@ -30,18 +34,20 @@ export type Surface = { kind: "board"; workspaceId: string; page: number } | { k
 export type WorkspaceRow = {
   room_id: string; id: string; open: number; board_page: number; board_pages: number;
   board_collapsed: number; doc_collapsed: number; doc_id: string | null; all_draw: number;
-  version: number; created_at: number; updated_at: number;
+  version: number; created_at: number; updated_at: number; board_pos: number;
 };
 export type DocumentRow = {
   id: string; room_id: string; name: string; kind: DocumentKind; page_count: number; pages: string;
-  page: number; status: "uploading" | "ready" | "deleted" | "purged"; bytes: number; created_at: number;
+  page: number; status: "uploading" | "ready" | "deleted" | "purged"; bytes: number; created_at: number; pos: number;
 };
-type WorkspaceFields = Pick<WorkspaceRow, "open" | "board_page" | "board_pages" | "board_collapsed" | "doc_collapsed" | "doc_id" | "all_draw">;
-export type WorkspaceChange = { set: Partial<WorkspaceFields>; docPage?: { docId: string; page: number } };
+type WorkspaceFields = Pick<WorkspaceRow, "open" | "board_page" | "board_pages" | "board_pos" | "board_collapsed" | "doc_collapsed" | "doc_id" | "all_draw">;
+// quiet: the teacher's scroll position — stored without a new version or a broadcast (peers get it over the data channel).
+// clearBoard: every mark of the board goes with this change.
+export type WorkspaceChange = { set: Partial<WorkspaceFields>; docPos?: { docId: string; pos: number }; quiet?: boolean; clearBoard?: boolean };
 export type WorkspaceRejection = { error: string; status: number };
 export type BoardMember = { role: Role; board_draw?: number | boolean | null };
 // What the host changed locally before the server confirmed it; version = the server version the change produced (null while in flight).
-export type WorkspacePatch = Partial<Pick<WorkspaceView, "open" | "boardPage" | "boardPages" | "boardCollapsed" | "docCollapsed" | "allDraw">> & { docPage?: number };
+export type WorkspacePatch = Partial<Pick<WorkspaceView, "open" | "boardCollapsed" | "docCollapsed" | "allDraw">>;
 export type PendingWorkspace = { patch: WorkspacePatch; version: number | null };
 export type Stage = "workspace" | "share" | "grid";
 export type StageChoice = "workspace" | "share";
@@ -67,7 +73,7 @@ export function parseSurface(value: unknown): Surface | null {
   const match = SURFACE.exec(value);
   if (!match || !UUID.test(match[2])) return null;
   const page = Number(match[3]);
-  if (match[1] === "b") return page < MAX_BOARD_PAGES ? { kind: "board", workspaceId: match[2], page } : null;
+  if (match[1] === "b") return page < MAX_BOARD_BANDS ? { kind: "board", workspaceId: match[2], page } : null;
   return page < MAX_DOC_PAGES ? { kind: "doc", docId: match[2], page } : null;
 }
 
@@ -76,9 +82,12 @@ export function surfaceKind(shareId: string): "board" | "doc" | "share" {
   return shareId.startsWith("b:") ? "board" : shareId.startsWith("d:") ? "doc" : "share";
 }
 
-export const acceptsBoard = (shareId: string) => surfaceKind(shareId) === "board";
-export const acceptsDoc = (shareId: string) => surfaceKind(shareId) === "doc";
 export const acceptsShare = (shareId: string) => surfaceKind(shareId) === "share";
+
+// share_id range of all bands of one board (':' + 1 is ';'): for SQL `share_id >= from AND share_id < to` and prefix checks.
+export function boardRange(workspaceId: string): { from: string; to: string } {
+  return { from: `b:${workspaceId}:`, to: `b:${workspaceId};` };
+}
 
 // Permissions
 
@@ -92,7 +101,15 @@ export function canModerateBoard(member: Pick<BoardMember, "role"> | null | unde
   return member?.role === "host";
 }
 
-function workspaceContext(state: RoomState | null, selfId: string | null, shareId: string | null): SyncContext {
+// The last band a student may draw on: the bands in use, the first blank one, and what the teacher's window shows (the teacher
+// may have scrolled on to clean paper). Never further, so a student cannot stretch everyone's board. The teacher has no limit.
+export function studentBandLimit(row: Pick<WorkspaceRow, "board_pages" | "board_pos">): number {
+  const shown = Math.floor(Number.isFinite(row.board_pos) ? Math.max(0, row.board_pos) : 0) + STUDENT_REACH_BANDS;
+  return Math.min(MAX_BOARD_BANDS - 1, Math.max(row.board_pages, shown));
+}
+
+// The sync context of one workspace surface: who may draw there right now, and whose names to show.
+export function workspaceContext(state: RoomState | null, selfId: string | null, shareId: string | null): SyncContext {
   const workspace = state?.workspace;
   if (!state || !workspace) return { ...EMPTY_CONTEXT, selfId };
   const members = new Map(state.members.map((member) => [member.id, member]));
@@ -105,51 +122,40 @@ function workspaceContext(state: RoomState | null, selfId: string | null, shareI
   };
 }
 
-export function boardContextFromState(state: RoomState | null, selfId: string | null): SyncContext {
-  const workspace = state?.workspace;
-  return workspaceContext(state, selfId, workspace?.open ? workspace.boardSurface : null);
-}
-
-export function docContextFromState(state: RoomState | null, selfId: string | null): SyncContext {
-  const workspace = state?.workspace;
-  return workspaceContext(state, selfId, workspace?.open && workspace.doc ? workspace.doc.surface : null);
-}
-
-export function selectBoardSnapshot(state: RoomState): { shareId: string | null; rows: Annotation[] } {
-  const workspace = state.workspace;
-  return { shareId: workspace?.open ? workspace.boardSurface : null, rows: Array.isArray(state.boardAnnotations) ? state.boardAnnotations : [] };
-}
-
-export function selectDocSnapshot(state: RoomState): { shareId: string | null; rows: Annotation[] } {
-  const workspace = state.workspace;
-  return { shareId: workspace?.open && workspace.doc ? workspace.doc.surface : null, rows: Array.isArray(state.docAnnotations) ? state.docAnnotations : [] };
-}
-
 // Workspace changes (server)
 
-function int(value: unknown): number | null {
-  return typeof value === "number" && Number.isInteger(value) ? value : null;
-}
+const STALE_TAB = { error: "Доска обновилась — перезагрузите страницу", status: 409 } as const;
+const round4 = (value: number) => Math.round(value * 1e4) / 1e4;
 
 export function clampPage(page: number, count: number): number {
   return Math.max(0, Math.min(Math.max(1, count) - 1, Number.isFinite(page) ? Math.trunc(page) : 0));
 }
 
-// One host action on the workspace row. `doc` is the document the action names (docSelect, docDelete) or the current one (docPage).
+// One host action on the workspace row. `doc` is the document the action names (docSelect, docDelete) or the current one (view).
 export function workspaceUpdate(row: WorkspaceRow, input: Record<string, unknown>, doc: Pick<DocumentRow, "id" | "page_count" | "status"> | null): WorkspaceChange | WorkspaceRejection {
   switch (input.action) {
     case "open":
       return { set: { open: 1 } };
     case "close":
       return { set: { open: 0 } };
-    case "boardPage": {
-      const page = int(input.page);
-      if (page === null || page < 0 || page >= row.board_pages) return { error: "Такого листа нет", status: 400 };
-      return { set: { board_page: page } };
+    case "view": {
+      const pos = typeof input.pos === "number" && Number.isFinite(input.pos) ? round4(input.pos) : null;
+      if (input.part === "board") {
+        if (pos === null || pos < 0 || pos >= MAX_BOARD_BANDS) return { error: "Некорректная позиция", status: 400 };
+        return { set: { board_pos: pos, board_page: Math.floor(pos) }, quiet: true };
+      }
+      if (input.part !== "doc") return { error: "Некорректное действие", status: 400 };
+      if (!doc || !row.doc_id || doc.id !== row.doc_id || doc.status !== "ready") return { error: "Материал не открыт", status: 409 };
+      if (pos === null || pos < 0 || pos > doc.page_count) return { error: "Некорректная позиция", status: 400 };
+      return { set: {}, docPos: { docId: doc.id, pos: Math.min(pos, doc.page_count - 1e-4) }, quiet: true };
     }
+    case "boardClear":
+      return { set: { board_pos: 0, board_page: 0, board_pages: 1 }, clearBoard: true };
+    // What tabs opened before the scrolling workspace still send.
+    case "boardPage":
     case "addBoardPage":
-      if (row.board_pages >= MAX_BOARD_PAGES) return { error: `На доске не больше ${MAX_BOARD_PAGES} листов`, status: 409 };
-      return { set: { board_pages: row.board_pages + 1, board_page: row.board_pages } };
+    case "docPage":
+      return STALE_TAB;
     case "collapse": {
       if ((input.part !== "board" && input.part !== "doc") || typeof input.collapsed !== "boolean") return { error: "Некорректное действие", status: 400 };
       return { set: input.part === "board" ? { board_collapsed: input.collapsed ? 1 : 0 } : { doc_collapsed: input.collapsed ? 1 : 0 } };
@@ -160,12 +166,6 @@ export function workspaceUpdate(row: WorkspaceRow, input: Record<string, unknown
     case "docSelect":
       if (!doc || doc.id !== input.docId || doc.status !== "ready") return { error: "Материал не найден", status: 404 };
       return { set: { doc_id: doc.id, doc_collapsed: 0 } };
-    case "docPage": {
-      const page = int(input.page);
-      if (!doc || !row.doc_id || doc.id !== row.doc_id || doc.status !== "ready") return { error: "Материал не открыт", status: 409 };
-      if (page === null || page < 0 || page >= doc.page_count) return { error: "Такой страницы нет", status: 400 };
-      return { set: {}, docPage: { docId: doc.id, page } };
-    }
     case "docClose":
       return { set: { doc_id: null } };
     case "docDelete":
@@ -181,16 +181,21 @@ export function parsePages(text: string, count: number): Array<[number, number]>
   catch { return null; }
 }
 
+const position = (value: unknown, count: number) => (typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(value, count - 1e-4)) : 0);
+
 export function toWorkspaceView(row: WorkspaceRow, doc: (DocumentRow & { token: string }) | null, documents?: WorkspaceDocument[]): WorkspaceView {
-  const boardPages = Math.max(1, Math.min(MAX_BOARD_PAGES, row.board_pages));
-  const boardPage = clampPage(row.board_page, boardPages);
+  const boardPages = Math.max(1, Math.min(MAX_BOARD_BANDS, row.board_pages));
+  const boardPos = position(row.board_pos, MAX_BOARD_BANDS);
+  const boardPage = clampPage(boardPos, boardPages);
   const pages = doc && doc.status === "ready" ? parsePages(doc.pages, doc.page_count) : null;
-  const docPage = doc && pages ? clampPage(doc.page, pages.length) : 0;
+  const docPos = doc && pages ? position(doc.pos, pages.length) : 0;
+  const docPage = Math.floor(docPos);
   return {
     id: row.id, open: Boolean(row.open), version: row.version,
-    boardPage, boardPages, boardSurface: boardSurface(row.id, boardPage),
+    boardPos, boardPages,
     boardCollapsed: Boolean(row.board_collapsed), docCollapsed: Boolean(row.doc_collapsed), allDraw: Boolean(row.all_draw),
-    doc: doc && pages ? { id: doc.id, name: doc.name, kind: doc.kind, pageCount: pages.length, page: docPage, pages, surface: docSurface(doc.id, docPage), token: doc.token } : null,
+    boardPage, boardSurface: boardSurface(row.id, boardPage),
+    doc: doc && pages ? { id: doc.id, name: doc.name, kind: doc.kind, pageCount: pages.length, pos: docPos, pages, token: doc.token, page: docPage, surface: docSurface(doc.id, docPage) } : null,
     ...(documents ? { documents } : {}),
   };
 }
@@ -203,17 +208,12 @@ export function docTokenExp(nowSeconds: number, window = DOC_TOKEN_WINDOW_S): nu
 // Workspace changes (client)
 
 export function applyWorkspacePatch(view: WorkspaceView, patch: WorkspacePatch): WorkspaceView {
-  const boardPages = patch.boardPages ?? view.boardPages;
-  const boardPage = clampPage(patch.boardPage ?? view.boardPage, boardPages);
-  const doc = view.doc && patch.docPage !== undefined ? { ...view.doc, page: clampPage(patch.docPage, view.doc.pageCount), surface: docSurface(view.doc.id, clampPage(patch.docPage, view.doc.pageCount)) } : view.doc;
   return {
     ...view,
     open: patch.open ?? view.open,
-    boardPage, boardPages, boardSurface: boardSurface(view.id, boardPage),
     boardCollapsed: patch.boardCollapsed ?? view.boardCollapsed,
     docCollapsed: patch.docCollapsed ?? view.docCollapsed,
     allDraw: patch.allDraw ?? view.allDraw,
-    doc,
   };
 }
 

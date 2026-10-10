@@ -45,6 +45,12 @@ export const WHEEL_PAGE_PX = 800;
 export const WHEEL_MAX_PX = 25;
 export const WHEEL_RATE = 0.01;
 export const IDENTITY_VIEW: View = Object.freeze({ scale: 1, x: 0.5, y: 0.5 });
+// A scrolling strip (frame much taller than the viewport) starts at its top, not in its middle.
+export const TOP_VIEW: View = Object.freeze({ scale: 1, x: 0.5, y: 0 });
+export const WHEEL_SCROLL_LINE_PX = 40;
+export const PANNABLE_EPSILON = 0.5;
+// A stretch of a strip, in frame px at scale 1: what may be scrolled to (the board's used part) or the window a follower is held in.
+export type Band = Readonly<{ top: number; bottom: number }>;
 
 const SAME_EPSILON = 1e-9;
 
@@ -130,6 +136,55 @@ export function fromTransform(css: string, box: Size, viewport: Size, max = MAX_
   const translate = TRANSLATE_RE.exec(text), scale = SCALE_RE.exec(text);
   if (!translate && !scale) return null;
   return fromOffset({ scale: scale ? Number(scale[1]) : 1, left: translate ? Number(translate[1]) : 0, top: translate?.[2] ? Number(translate[2]) : 0 }, box, viewport, max);
+}
+
+// Strips
+
+// The content row (frame px at scale 1) shown at the viewport's top edge.
+export function viewTop(view: View, box: Size, viewport: Size, max = MAX_ZOOM): number {
+  const { scale, top } = toOffset(view, box, viewport, max);
+  return -top / scale;
+}
+
+// Same scale and horizontal position, with content row `top` (frame px at scale 1) at the viewport's top edge.
+export function viewAtTop(view: View, top: number, box: Size, viewport: Size, max = MAX_ZOOM): View {
+  const from = toOffset(view, box, viewport, max);
+  return keep(view, fromOffset({ scale: from.scale, left: from.left, top: -from.scale * finite(top, 0) }, box, viewport, max));
+}
+
+// Keeps the viewport inside `band`: no row above band.top or below band.bottom shows, at any zoom. A band no taller than
+// the viewport is pinned to the viewport's top (a follower at scale 1 sees exactly the teacher's rows).
+export function clampToBand(view: View, band: Band, box: Size, viewport: Size, max = MAX_ZOOM): View {
+  const from = toOffset(view, box, viewport, max);
+  const highest = -from.scale * band.top, lowest = viewport.height - from.scale * band.bottom;
+  const top = lowest < highest ? clamp(from.top, lowest, highest) : highest;
+  if (Math.abs(top - from.top) < 1e-6) return clampTransform(view, box, viewport, max);
+  return keep(view, fromOffset({ scale: from.scale, left: from.left, top }, box, viewport, max));
+}
+
+// Something to scroll: the scaled content (or the band it is held in) is larger than the viewport on an axis.
+export function isPannable(view: View, box: Size, viewport: Size, max = MAX_ZOOM, band?: Band | null): boolean {
+  const scale = clampScale(view.scale, max);
+  const height = band ? band.bottom - band.top : box.height;
+  return scale * box.width > viewport.width + PANNABLE_EPSILON || scale * height > viewport.height + PANNABLE_EPSILON;
+}
+
+// Back to scale 1 about `focus`, staying where the viewer is (a strip must not jump to its middle).
+export function zoomOutAt(view: View, focus: XY, box: Size, viewport: Size, max = MAX_ZOOM): View {
+  return zoomAt(view, 1 / clampScale(view.scale, max), focus, box, viewport, max);
+}
+
+// Double-tap / double-click on a strip: zoomed -> scale 1 in place; otherwise zoom to `target` about the tap.
+export function toggleStripZoom(view: View, focus: XY, box: Size, viewport: Size, max = MAX_ZOOM, target = DOUBLE_TAP_ZOOM): View {
+  if (isZoomed(view)) return zoomOutAt(view, focus, box, viewport, max);
+  return zoomAt(view, target / clampScale(view.scale, max), focus, box, viewport, max);
+}
+
+// A plain wheel over a strip, as a pan in px (content moves opposite to the wheel). Shift turns a vertical wheel sideways.
+export function wheelPan(deltaX: number, deltaY: number, deltaMode: number, shiftKey: boolean, viewport: Size): XY {
+  const unit = deltaMode === 1 ? WHEEL_SCROLL_LINE_PX : deltaMode === 2 ? Math.max(1, viewport.height * 0.9) : 1;
+  const x = finite(deltaX, 0) * unit, y = finite(deltaY, 0) * unit;
+  return shiftKey && x === 0 ? { x: -y || 0, y: 0 } : { x: -x || 0, y: -y || 0 };
 }
 
 // Normalised frame point -> viewport px, and back (not clamped to the frame).

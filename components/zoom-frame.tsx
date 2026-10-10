@@ -1,10 +1,10 @@
 "use client";
 
-import { createContext, useCallback, useContext, useLayoutEffect, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useImperativeHandle, useLayoutEffect, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fitBox, type Size } from "@/lib/annotation-geometry";
-import { clampTransform, DEFAULT_MAX_ZOOM, ensureMinScale, IDENTITY_VIEW, isDoubleTap, isTap, isZoomed, maxScaleFor, panBy, pinch, routePointerDown, toggleZoom, toTransform, wheelZoomFactor, ZOOM_STEP, zoomAt, zoomPercent, type PinchStart, type PointerRoute, type Tap, type View, type XY } from "@/lib/view-transform";
+import { clampToBand, clampTransform, DEFAULT_MAX_ZOOM, ensureMinScale, IDENTITY_VIEW, isDoubleTap, isPannable, isTap, isZoomed, maxScaleFor, panBy, pinch, routePointerDown, toggleStripZoom, toggleZoom, TOP_VIEW, toTransform, wheelPan, wheelZoomFactor, ZOOM_STEP, zoomAt, zoomOutAt, zoomPercent, type Band, type PinchStart, type PointerRoute, type Tap, type View, type XY } from "@/lib/view-transform";
 import type { Point } from "@/lib/confa-types";
 
 export type FrameInteraction = "draw" | "view";
@@ -21,8 +21,27 @@ export type FrameInfo = {
   ensureScale(minScale: number, focus: Point): void;
   overlay: HTMLElement | null;
 };
+// What a strip's owner needs from outside the frame: where the view is (also mid-gesture) and a way to move it.
+export type FrameState = { view: View; box: Size; viewport: Size; max: number };
+export type FrameController = {
+  get(): FrameState;
+  apply(change: (view: View, state: FrameState) => View, animate?: boolean): void; // moves and commits
+  preview(change: (view: View, state: FrameState) => View): void; // moves now, commits once the moves stop (following)
+  subscribe(listener: () => void): () => void; // every shown view: gesture frames, commits, resizes
+};
 type Props = {
   frame: Size | null; // the content's pixel size (aspect, zoom limit); null until known
+  // "width": a scrolling strip. The frame is `boxWidth` wide (default: the viewport's width) and as tall as its aspect makes
+  // it, usually far taller than the viewport; the view starts at its top, a plain wheel and a drag in «Просмотр» scroll it.
+  fit?: "contain" | "width";
+  boxWidth?: number;
+  band?: Band | null; // strip only, in strip widths: the rows the view may show (the board's used part, a follower's window)
+  locked?: boolean; // strip only: no scrolling by wheel, drag or fling (a follower), zoom stays
+  glide?: boolean; // a view change that comes from the props (the teacher scrolled) eases in instead of jumping
+  controller?: Ref<FrameController>;
+  penOnly?: boolean; // controlled: several frames behind one toolbar share the flag
+  onPenOnlyChange?: (value: boolean) => void;
+  controlsClassName?: string; // where the zoom buttons sit
   media?: ReactNode; // drawn in the frame under the children (the video, a page image, the board)
   children?: ReactNode;
   className?: string;
@@ -34,9 +53,9 @@ type Props = {
   resetKey?: string | null;
   zoomLabel?: string;
 };
-// What the gesture handlers read at event time (written after every render).
-type Geometry = { view: View; box: Size; viewport: Size; max: number; interaction: FrameInteraction; penOnly: boolean; fingersDraw: boolean };
-type Zoomer = { apply(change: (view: View, geometry: Geometry) => View, animate?: boolean): void };
+// What the gesture handlers read at event time (written after every render). band: in frame px at scale 1.
+type Geometry = { view: View; box: Size; viewport: Size; max: number; interaction: FrameInteraction; penOnly: boolean; fingersDraw: boolean; strip: boolean; band: Band | null; locked: boolean };
+type Zoomer = { current(): View; apply(change: (view: View, geometry: Geometry) => View, animate?: boolean): void; preview(change: (view: View, geometry: Geometry) => View): void };
 type Tracked = { type: string; route: PointerRoute; at: XY; down: Tap };
 type GestureStart = { kind: "pan"; id: number; view: View; from: XY } | { kind: "pinch"; ids: [number, number]; start: PinchStart };
 
@@ -44,6 +63,10 @@ const DEFAULT_ASPECT = 16 / 9;
 const WHEEL_SETTLE_MS = 160; // Ctrl+wheel and trackpad pinch commit once the wheel goes quiet
 const ANIMATE_MS = 160;
 const TOUCH_DBLCLICK_MS = 800; // a dblclick this soon after a touch or pen tap was synthesized from it
+const FLING_MIN_SPEED = 0.35; // px/ms at release for a strip to keep rolling
+const FLING_STOP_SPEED = 0.02;
+const FLING_DECAY_MS = 325;
+const GLIDE_MS = 110; // a follower's step between two of the teacher's positions (sent every ~80 ms)
 const EMPTY: Size = { width: 0, height: 0 };
 const now = () => performance.now();
 
@@ -58,9 +81,9 @@ export function useFrame(): FrameInfo {
 const centreOf = (size: Size): XY => ({ x: size.width / 2, y: size.height / 2 });
 
 // Fine pointers: −, {pct}%, + (shown on hover until zoomed). Coarse pointers: only a «{pct}% ✕» reset chip while zoomed.
-function ZoomControls({ label, percent, zoomed, canZoomIn, onZoom, onReset }: { label: string; percent: number; zoomed: boolean; canZoomIn: boolean; onZoom: (factor: number) => void; onReset: () => void }) {
+function ZoomControls({ label, percent, zoomed, canZoomIn, className, onZoom, onReset }: { label: string; percent: number; zoomed: boolean; canZoomIn: boolean; className: string; onZoom: (factor: number) => void; onReset: () => void }) {
   const round = "rounded-full text-white hover:bg-white/10 hover:text-white";
-  return <div data-gesture-ignore className="pointer-events-none absolute bottom-2 right-2 z-20 flex items-center transition-opacity group-has-data-[annotating=true]/screen:opacity-0">
+  return <div data-gesture-ignore className={`pointer-events-none absolute z-20 flex items-center transition-opacity group-has-data-[annotating=true]/screen:opacity-0 ${className}`}>
     <div role="group" aria-label={label} className={`flex items-center gap-0.5 rounded-full border border-white/15 bg-[#12243a]/90 p-0.5 text-white shadow-xl transition-opacity pointer-coarse:hidden ${zoomed ? "pointer-events-auto" : "opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/screen:pointer-events-auto group-hover/screen:opacity-100"}`}>
       <Button variant="ghost" size="icon-sm" title="Отдалить" aria-label="Отдалить" disabled={!zoomed} className={round} onClick={() => onZoom(1 / ZOOM_STEP)}><ZoomOut /></Button>
       <Button variant="ghost" size="sm" title="Сбросить масштаб" aria-label={`Масштаб ${percent}%. Сбросить масштаб`} className={`h-8 min-w-12 px-2 text-xs tabular-nums ${round}`} onClick={onReset}>{percent}%</Button>
@@ -70,44 +93,65 @@ function ZoomControls({ label, percent, zoomed, canZoomIn, onZoom, onReset }: { 
   </div>;
 }
 
-// A frame of known aspect, fitted into its box, with zoom and pan (Ctrl+wheel, pinch, buttons) and the gesture arbiter that
-// decides per pointer whether it pans or reaches the annotation layer in `children`. The share, the board and material pages use it.
-export function ZoomFrame({ frame, media, children, className = "", frameClassName = "bg-black", frameless = false, zoomable = false, interaction = "view", fingersDraw = false, resetKey = null, zoomLabel = "Масштаб демонстрации" }: Props) {
+// A frame of known aspect with zoom and pan (Ctrl+wheel, pinch, buttons) and the gesture arbiter that decides per pointer
+// whether it pans or reaches the annotation layer in `children`. Fitted whole into its box (the share), or a scrolling strip
+// as wide as its box whose tiles are <FrameTile>s (the board, a material).
+export function ZoomFrame({ frame, media, children, className = "", frameClassName = "bg-black", frameless = false, zoomable = false, interaction = "view", fingersDraw = false, resetKey = null, zoomLabel = "Масштаб демонстрации", fit = "contain", boxWidth, band = null, locked = false, glide = false, controller, penOnly: penOnlyProp, onPenOnlyChange, controlsClassName = "bottom-2 right-2" }: Props) {
+  const strip = fit === "width";
+  const home = strip ? TOP_VIEW : IDENTITY_VIEW;
   const [viewport, setViewport] = useState<Size>(EMPTY);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
-  const [penOnly, setPenOnly] = useState(false);
-  const [storedView, setStoredView] = useState<View>(IDENTITY_VIEW);
+  const [ownPenOnly, setOwnPenOnly] = useState(false);
+  const [storedView, setStoredView] = useState<View>(home);
   const [viewKey, setViewKey] = useState(resetKey);
   const [gestureListeners] = useState(() => new Set<() => void>());
+  const [viewListeners] = useState(() => new Set<() => void>());
   const viewportRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
-  const geometry = useRef<Geometry>({ view: IDENTITY_VIEW, box: EMPTY, viewport: EMPTY, max: DEFAULT_MAX_ZOOM, interaction, penOnly: false, fingersDraw });
+  const geometry = useRef<Geometry>({ view: home, box: EMPTY, viewport: EMPTY, max: DEFAULT_MAX_ZOOM, interaction, penOnly: false, fingersDraw, strip, band: null, locked });
   const zoomer = useRef<Zoomer | null>(null);
+  const penOnly = penOnlyProp ?? ownPenOnly;
+  const penOnlyChanged = useRef(onPenOnlyChange);
+  const setPenOnly = useCallback((value: boolean) => {
+    setOwnPenOnly(value);
+    penOnlyChanged.current?.(value);
+  }, []);
 
   if (viewKey !== resetKey) {
     setViewKey(resetKey);
-    setStoredView(IDENTITY_VIEW);
+    setStoredView(home);
   }
 
   const aspect = frame && frame.width > 0 && frame.height > 0 ? frame.width / frame.height : DEFAULT_ASPECT;
-  const box = useMemo(() => fitBox(viewport, aspect), [viewport, aspect]);
+  const stripWidth = boxWidth && boxWidth > 0 ? Math.min(boxWidth, viewport.width) : viewport.width;
+  const box = useMemo(() => strip ? { width: stripWidth, height: stripWidth / aspect } : fitBox(viewport, aspect), [strip, stripWidth, viewport, aspect]);
   const ready = Boolean(frame) && box.width > 0 && box.height > 0;
   const max = maxScaleFor(frame, box);
+  const bandTop = band ? band.top * box.width : 0, bandBottom = band ? band.bottom * box.width : 0;
+  const bandPx = useMemo<Band | null>(() => strip && band ? { top: bandTop, bottom: bandBottom } : null, [strip, band, bandTop, bandBottom]);
   // The stored view keeps the point the viewer looked at; a resize or a new frame size only re-clamps what is shown.
-  const view = zoomable ? clampTransform(storedView, box, viewport, max) : IDENTITY_VIEW;
+  const fitted = zoomable ? clampTransform(storedView, box, viewport, max) : home;
+  const view = bandPx && zoomable ? clampToBand(fitted, bandPx, box, viewport, max) : fitted;
   const transform = toTransform(view, box, viewport, max);
   const scale = view.scale;
   const zoomed = isZoomed(view);
+  const pannable = strip ? isPannable(view, box, viewport, max, bandPx) : zoomed;
 
   useLayoutEffect(() => {
-    geometry.current = { view, box, viewport, max, interaction, penOnly, fingersDraw };
+    geometry.current = { view, box, viewport, max, interaction, penOnly, fingersDraw, strip, band: bandPx, locked };
+    penOnlyChanged.current = onPenOnlyChange;
   });
 
   // The transform is never in the JSX: gestures write it straight to the element between commits.
   useLayoutEffect(() => {
     const element = frameRef.current;
-    if (element) element.style.transform = transform;
-  }, [transform]);
+    if (element) {
+      // Gestures switch the transition off again (stopAnimation) before they write.
+      if (glide) element.style.transition = `transform ${GLIDE_MS}ms linear`;
+      element.style.transform = transform;
+    }
+    for (const listener of [...viewListeners]) listener();
+  }, [transform, box, viewport, viewListeners, glide]);
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -134,10 +178,18 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     let multi = false; // the touch gesture had two pointers at some point: its pointerups are not taps
     let lastTap: Tap | null = null;
     let touchAt = -Infinity;
-    let raf = 0, settle = 0, unanimate = 0;
+    let raf = 0, settle = 0, unanimate = 0, flingFrame = 0;
+    let speed: { x: number; y: number; t: number } | null = null; // of a one-finger pan, px/ms (for the fling)
 
     const geo = () => geometry.current;
     const current = () => live ?? geo().view;
+    const held = (next: View): View => {
+      const g = geo();
+      return g.band ? clampToBand(next, g.band, g.box, g.viewport, g.max) : next;
+    };
+    const tell = () => {
+      for (const listener of [...viewListeners]) listener();
+    };
     const local = (event: { clientX: number; clientY: number }): XY => {
       const rect = element.getBoundingClientRect();
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -154,10 +206,12 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     };
     const paint = () => {
       raf = 0;
-      if (live) write(live);
+      if (!live) return;
+      write(live);
+      tell();
     };
     const show = (next: View) => {
-      live = next;
+      live = held(next);
       stopAnimation();
       content.style.willChange = "transform";
       if (!raf) raf = win.requestAnimationFrame(paint);
@@ -167,7 +221,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       if (settle) win.clearTimeout(settle);
       raf = 0;
       settle = 0;
-      const next = live;
+      const next = live ? held(live) : null;
       live = null;
       content.style.willChange = "";
       if (!next) return;
@@ -180,6 +234,45 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       // Seen by the next event even before React re-renders.
       geometry.current = { ...geo(), view: next };
       setStoredView(next);
+      tell();
+    };
+    const settleSoon = () => {
+      if (settle) win.clearTimeout(settle);
+      settle = win.setTimeout(() => {
+        settle = 0;
+        if (!start) commit();
+      }, WHEEL_SETTLE_MS);
+    };
+    // A strip keeps rolling after a quick one-finger swipe, slowing down until it stops or something touches it.
+    const stopFling = () => {
+      if (!flingFrame) return;
+      win.cancelAnimationFrame(flingFrame);
+      flingFrame = 0;
+      commit();
+    };
+    const fling = (vx: number, vy: number) => {
+      let last = now();
+      const roll = () => {
+        const t = now(), dt = Math.min(64, t - last);
+        last = t;
+        const g = geo(), from = current();
+        const next = held(panBy(from, vx * dt, vy * dt, g.box, g.viewport, g.max));
+        const decay = Math.exp(-dt / FLING_DECAY_MS);
+        vx *= decay;
+        vy *= decay;
+        if (next === from || Math.hypot(vx, vy) < FLING_STOP_SPEED) {
+          flingFrame = 0;
+          live = next;
+          commit();
+          return;
+        }
+        live = next;
+        write(next);
+        tell();
+        flingFrame = win.requestAnimationFrame(roll);
+      };
+      content.style.willChange = "transform";
+      flingFrame = win.requestAnimationFrame(roll);
     };
     const capture = (pointerId: number) => {
       try { element.setPointerCapture(pointerId); } catch { /* The pointer is already gone */ }
@@ -224,6 +317,8 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
 
     const onDown = (event: PointerEvent) => {
       if (ignored(event)) return;
+      stopFling();
+      speed = null;
       stopAnimation(); // the layer measures the frame for this pointer: not mid-animation
       pointers.delete(event.pointerId); // its pointerup was lost
       const g = geo();
@@ -234,7 +329,9 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
         if (pointer.type === "touch") otherTouches++;
         else if (pointer.type === "pen") penDown = true;
       }
-      const decision = routePointerDown({ pointerType: type, button: event.button, interaction: g.interaction, penOnly: g.penOnly, penDown, otherTouches, zoomed: isZoomed(current()), primary: event.isPrimary });
+      // A strip scrolls at any zoom, so there a mouse drag in «Просмотр» pans whenever there is somewhere to go.
+      const zoomed = g.strip ? isPannable(current(), g.box, g.viewport, g.max, g.band) : isZoomed(current());
+      const decision = routePointerDown({ pointerType: type, button: event.button, interaction: g.interaction, penOnly: g.penOnly, penDown, otherTouches, zoomed, primary: event.isPrimary });
       if (decision.penOnly && !g.penOnly && !g.fingersDraw) {
         geometry.current = { ...g, penOnly: true };
         setPenOnly(true);
@@ -278,12 +375,19 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       }
       event.stopPropagation();
       if (pointer.route === "block") return;
+      const before = pointer.at;
       pointer.at = local(event);
       const g = geo();
       if (start?.kind === "pinch") {
+        speed = null;
         const a = pointers.get(start.ids[0]), b = pointers.get(start.ids[1]);
         if (a && b) show(pinch(start.start, a.at, b.at, g.box, g.viewport, g.max));
       } else if (start?.kind === "pan" && start.id === event.pointerId) {
+        const t = now();
+        if (speed && t > speed.t) {
+          const dt = t - speed.t, mix = Math.min(1, dt / 50);
+          speed = { x: speed.x + mix * ((pointer.at.x - before.x) / dt - speed.x), y: speed.y + mix * ((pointer.at.y - before.y) / dt - speed.y), t };
+        } else speed ??= { x: 0, y: 0, t };
         show(panBy(start.view, pointer.at.x - start.from.x, pointer.at.y - start.from.y, g.box, g.viewport, g.max));
       }
     };
@@ -310,10 +414,17 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
         else if (isDoubleTap(lastTap, tap)) {
           lastTap = null;
           const g = geo();
-          live = toggleZoom(current(), tap, g.box, g.viewport, g.max);
+          live = (g.strip ? toggleStripZoom : toggleZoom)(current(), tap, g.box, g.viewport, g.max);
           commit(true);
           return;
         } else lastTap = tap;
+      }
+      const released = speed;
+      speed = null;
+      const g = geo();
+      if (g.strip && !g.locked && single && pointer.type === "touch" && released && now() - released.t < 80 && Math.hypot(released.x, released.y) >= FLING_MIN_SPEED) {
+        fling(released.x, released.y);
+        return;
       }
       commit();
     };
@@ -333,27 +444,35 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     const onDoubleClick = (event: MouseEvent) => {
       if (geo().interaction !== "view" || now() - touchAt < TOUCH_DBLCLICK_MS || ignored(event)) return;
       const g = geo();
-      live = toggleZoom(current(), local(event), g.box, g.viewport, g.max);
+      live = (g.strip ? toggleStripZoom : toggleZoom)(current(), local(event), g.box, g.viewport, g.max);
       commit(true);
     };
 
     // Ctrl+wheel and the trackpad pinch of Chrome, Edge and Firefox (they set ctrlKey); never the page zoom over the frame.
+    // A plain wheel scrolls a strip (Shift: sideways).
     const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey) return;
+      const g = geo();
+      if (!event.ctrlKey) {
+        if (!g.strip || ignored(event)) return;
+        event.preventDefault();
+        if (g.locked && !isZoomed(current())) return;
+        stopFling();
+        const by = wheelPan(event.deltaX, event.deltaY, event.deltaMode, event.shiftKey, g.viewport);
+        show(panBy(current(), by.x, by.y, g.box, g.viewport, g.max));
+        if (start) restart();
+        else settleSoon();
+        return;
+      }
       event.preventDefault();
       const factor = wheelZoomFactor(event.deltaY, event.deltaMode, true);
       if (factor === 1) return;
-      const g = geo();
+      stopFling();
       show(zoomAt(current(), factor, local(event), g.box, g.viewport, g.max));
       if (start) {
         restart();
         return;
       }
-      if (settle) win.clearTimeout(settle);
-      settle = win.setTimeout(() => {
-        settle = 0;
-        if (!start) commit();
-      }, WHEEL_SETTLE_MS);
+      settleSoon();
     };
     // iOS: no page pinch over the frame (touch-action alone is not always honoured once two fingers are down).
     // A pan is consumed too, so a fast swipe leaves no browser fling behind that would swallow the next tap.
@@ -363,10 +482,18 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     const onGesture = (event: Event) => event.preventDefault();
 
     zoomer.current = {
+      current,
       apply(change, animate = false) {
+        stopFling();
         live = change(current(), geo());
         commit(animate);
         if (start) restart();
+      },
+      preview(change) {
+        if (flingFrame) stopFling();
+        show(change(current(), geo()));
+        if (start) restart();
+        else settleSoon();
       },
     };
     element.addEventListener("pointerdown", onDown, true);
@@ -393,6 +520,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       element.removeEventListener("touchmove", onTouchMove);
       element.removeEventListener("gesturestart", onGesture);
       if (raf) win.cancelAnimationFrame(raf);
+      if (flingFrame) win.cancelAnimationFrame(flingFrame);
       if (settle) win.clearTimeout(settle);
       stopAnimation();
       // A dropped gesture leaves the committed view on screen (the share changed, or zoom was switched off).
@@ -401,7 +529,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       element.style.cursor = "";
       zoomer.current = null;
     };
-  }, [zoomable, resetKey, gestureListeners]);
+  }, [zoomable, resetKey, gestureListeners, viewListeners, setPenOnly]);
 
   const onGestureStart = useCallback((listener: () => void) => {
     gestureListeners.add(listener);
@@ -414,16 +542,48 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
   }, []);
 
   const zoomBy = (factor: number) => zoomer.current?.apply((current, g) => zoomAt(current, factor, centreOf(g.viewport), g.box, g.viewport, g.max), true);
-  const resetZoom = () => zoomer.current?.apply((_, g) => clampTransform(IDENTITY_VIEW, g.box, g.viewport, g.max), true);
+  const resetZoom = () => zoomer.current?.apply((current, g) => g.strip ? zoomOutAt(current, centreOf(g.viewport), g.box, g.viewport, g.max) : clampTransform(IDENTITY_VIEW, g.box, g.viewport, g.max), true);
 
-  const info = useMemo<FrameInfo>(() => ({ box, aspect, ready, scale, zoomable, interaction, penOnly, setPenOnly, onGestureStart, ensureScale, overlay }), [box, aspect, ready, scale, zoomable, interaction, penOnly, onGestureStart, ensureScale, overlay]);
+  useImperativeHandle(controller, () => {
+    const state = (): FrameState => {
+      const g = geometry.current;
+      return { view: zoomer.current?.current() ?? g.view, box: g.box, viewport: g.viewport, max: g.max };
+    };
+    return {
+      get: state,
+      apply: (change, animate) => zoomer.current?.apply((current) => change(current, state()), animate),
+      preview: (change) => zoomer.current?.preview((current) => change(current, state())),
+      subscribe(listener) {
+        viewListeners.add(listener);
+        return () => { viewListeners.delete(listener); };
+      },
+    };
+  }, [viewListeners]);
 
-  return <div ref={viewportRef} className={`group/screen relative h-full w-full overflow-hidden ${zoomable ? `touch-none [-webkit-touch-callout:none] ${zoomed && interaction === "view" ? "cursor-grab" : ""}` : ""} ${className}`}>
-    <div ref={frameRef} className={`absolute left-0 top-0 overflow-hidden ${frameClassName} ${frameless ? "" : "rounded-lg"}`} style={{ width: box.width, height: box.height, transformOrigin: "0 0" }}>
+  const info = useMemo<FrameInfo>(() => ({ box, aspect, ready, scale, zoomable, interaction, penOnly, setPenOnly, onGestureStart, ensureScale, overlay }), [box, aspect, ready, scale, zoomable, interaction, penOnly, setPenOnly, onGestureStart, ensureScale, overlay]);
+
+  // A strip's frame element has no height of its own (its tiles are placed by `top` and overflow it), so the browser never
+  // has to composite one layer hundreds of screens tall.
+  return <div ref={viewportRef} className={`group/screen relative h-full w-full overflow-hidden ${zoomable ? `touch-none [-webkit-touch-callout:none] ${pannable && interaction === "view" ? "cursor-grab" : ""}` : ""} ${className}`}>
+    <div ref={frameRef} className={strip ? "absolute left-0 top-0" : `absolute left-0 top-0 overflow-hidden ${frameClassName} ${frameless ? "" : "rounded-lg"}`} style={{ width: box.width, height: strip ? 0 : box.height, transformOrigin: "0 0" }}>
       {media}
       <FrameContext.Provider value={info}>{children}</FrameContext.Provider>
     </div>
     <div ref={setOverlay} className="pointer-events-none absolute inset-0 z-10" />
-    {zoomable && ready && <ZoomControls label={zoomLabel} percent={zoomPercent(view)} zoomed={zoomed} canZoomIn={scale < max - 0.001} onZoom={zoomBy} onReset={resetZoom} />}
+    {zoomable && ready && <ZoomControls label={zoomLabel} percent={zoomPercent(view)} zoomed={zoomed} canZoomIn={scale < max - 0.001} className={controlsClassName} onZoom={zoomBy} onReset={resetZoom} />}
+  </div>;
+}
+
+// One tile of a strip (a board band, a material page): placed at `top` (strip widths), `aspect` wide to tall. The annotation
+// layer inside sees it as its frame: its own box, the strip's zoom and gesture arbiter.
+export function FrameTile({ top, aspect, className = "", children }: { top: number; aspect: number; className?: string; children?: ReactNode }) {
+  const strip = useFrame();
+  const width = strip.box.width, height = aspect > 0 ? width / aspect : width;
+  const stripAspect = strip.aspect, ensure = strip.ensureScale;
+  // The text tool names a point of the tile; the strip zooms about the same point of itself.
+  const ensureScale = useCallback((minScale: number, focus: Point) => ensure(minScale, [focus[0], (top + focus[1] / aspect) * stripAspect]), [ensure, top, aspect, stripAspect]);
+  const info = useMemo<FrameInfo>(() => ({ ...strip, box: { width, height }, aspect, ensureScale }), [strip, width, height, aspect, ensureScale]);
+  return <div className={`absolute left-0 ${className}`} style={{ top: top * width, width, height }}>
+    <FrameContext.Provider value={info}>{children}</FrameContext.Provider>
   </div>;
 }

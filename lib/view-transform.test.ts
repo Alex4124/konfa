@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_ZOOM, DOUBLE_TAP, DOUBLE_TAP_ZOOM, IDENTITY_VIEW, MAX_ZOOM, MAX_ZOOM_FLOOR, TAP, clampTransform, ensureMinScale, fromOffset, fromTransform,
   isDoubleTap, isTap, isZoomed, maxScaleFor, panBy, pinch, routePointerDown, stripPlacement, toContent, toggleZoom, toOffset, toTransform, toViewport,
   wheelZoomFactor, zoomAt, zoomPercent, type Interaction, type PointerRoute, type RouteInput, type View, type XY,
+  TOP_VIEW, clampToBand, isPannable, toggleStripZoom, viewAtTop, viewTop, wheelPan, zoomOutAt,
 } from "./view-transform.ts";
 
 // Desktop: 1000×600 viewport showing a 16:9 frame (letterboxed top and bottom). Phone: 360×470 portrait.
@@ -491,5 +492,84 @@ describe("stripPlacement", () => {
 
   it("a strip taller than the area goes to the left", () => {
     assert.equal(stripPlacement({ width: 100, height: 50 }, 16 / 9, { top: 60, left: 20 }), "left");
+  });
+});
+
+// A scrolling strip: a 900 px wide frame of 200 bands (16:9) in a 900×600 viewport.
+describe("strips", () => {
+  const SV: Size = { width: 900, height: 600 };
+  const BAND = 900 * 9 / 16;
+  const SB: Size = { width: 900, height: 200 * BAND };
+  const top = (v: View, box = SB, viewport = SV) => toOffset(v, box, viewport, MAX_ZOOM).top;
+
+  it("a frame taller than the viewport pans vertically at scale 1 and starts at its top", () => {
+    assert.equal(top(TOP_VIEW), 0);
+    assert.equal(top(clampTransform(TOP_VIEW, SB, SV)), 0);
+    const down = panBy(TOP_VIEW, 40, -1234.5, SB, SV);
+    near(top(down), -1234.5, 1e-6);
+    assert.equal(toOffset(down, SB, SV).left, 0, "a fitting axis does not move");
+    near(top(panBy(down, 0, -1e9, SB, SV)), SV.height - SB.height, 1e-6);
+    near(viewTop(down, SB, SV), 1234.5, 1e-6);
+  });
+
+  it("viewAtTop puts a row at the top edge and keeps scale and horizontal position", () => {
+    const zoomed = zoomAt(TOP_VIEW, 2, { x: 600, y: 300 }, SB, SV);
+    const moved = viewAtTop(zoomed, 5000, SB, SV);
+    near(viewTop(moved, SB, SV), 5000, 1e-6);
+    near(moved.scale, 2);
+    near(toOffset(moved, SB, SV).left, toOffset(zoomed, SB, SV).left, 1e-6);
+    near(viewTop(viewAtTop(TOP_VIEW, -50, SB, SV), SB, SV), 0, 1e-6, "clamped at the start");
+  });
+
+  it("clampToBand stops the scroll at the band's end and leaves views inside it alone", () => {
+    const band = { top: 0, bottom: 3 * BAND };
+    const inside = viewAtTop(TOP_VIEW, 400, SB, SV);
+    assert.equal(clampToBand(inside, band, SB, SV), inside);
+    const past = viewAtTop(TOP_VIEW, 9000, SB, SV);
+    near(viewTop(clampToBand(past, band, SB, SV), SB, SV), 3 * BAND - SV.height, 1e-6);
+    const zoomedPast = zoomAt(past, 2, { x: 450, y: 300 }, SB, SV);
+    const held = toOffset(clampToBand(zoomedPast, band, SB, SV), SB, SV);
+    near(held.top, SV.height - 2 * band.bottom, 1e-6, "the band's last row sits on the viewport's bottom edge");
+  });
+
+  it("a follower's window pins the view at scale 1 and lets a zoomed view move only inside it", () => {
+    const window = { top: 2000, bottom: 2600 }; // the teacher's rows, exactly one viewport tall
+    for (const start of [0, 2100, 9000]) near(viewTop(clampToBand(viewAtTop(TOP_VIEW, start, SB, SV), window, SB, SV), SB, SV), 2000, 1e-6, `from ${start}`);
+    const zoomed = zoomAt(viewAtTop(TOP_VIEW, 2000, SB, SV), 2, { x: 450, y: 300 }, SB, SV);
+    const up = toOffset(clampToBand(panBy(zoomed, 0, 5000, SB, SV), window, SB, SV), SB, SV);
+    near(up.top, -2 * 2000, 1e-6, "cannot go above the window");
+    const down = toOffset(clampToBand(panBy(zoomed, 0, -5000, SB, SV), window, SB, SV), SB, SV);
+    near(down.top, SV.height - 2 * 2600, 1e-6, "cannot go below it");
+    const shorter = { top: 2000, bottom: 2300 };
+    near(viewTop(clampToBand(viewAtTop(TOP_VIEW, 2200, SB, SV), shorter, SB, SV), SB, SV), 2000, 1e-6, "a short band is pinned to its top");
+  });
+
+  it("isPannable: a strip scrolls at scale 1, a fitted frame only when zoomed, a band counts instead of the frame", () => {
+    assert.equal(isPannable(TOP_VIEW, SB, SV), true);
+    assert.equal(isPannable(IDENTITY_VIEW, B, V), false);
+    assert.equal(isPannable(view(2), B, V), true);
+    assert.equal(isPannable(TOP_VIEW, SB, SV, MAX_ZOOM, { top: 2000, bottom: 2600 }), false);
+    assert.equal(isPannable(view(1.5, 0.5, 0), SB, SV, MAX_ZOOM, { top: 2000, bottom: 2600 }), true);
+  });
+
+  it("zooming out and the double tap keep the place on a strip", () => {
+    const at = viewAtTop(TOP_VIEW, 30_000, SB, SV);
+    const focus = { x: 450, y: 300 };
+    const zoomed = toggleStripZoom(at, focus, SB, SV);
+    near(zoomed.scale, DOUBLE_TAP_ZOOM);
+    const back = toggleStripZoom(zoomed, focus, SB, SV);
+    near(back.scale, 1);
+    near(viewTop(back, SB, SV), 30_000, 1e-6);
+    near(viewTop(zoomOutAt(zoomed, focus, SB, SV), SB, SV), 30_000, 1e-6);
+    assert.notEqual(Math.round(viewTop(toggleZoom(zoomed, focus, SB, SV), SB, SV)), 30_000, "the screen-share toggle would jump to the middle");
+  });
+
+  it("wheelPan: px, lines and pages; Shift turns a vertical wheel sideways", () => {
+    assert.deepEqual(wheelPan(0, 100, 0, false, SV), { x: 0, y: -100 });
+    assert.deepEqual(wheelPan(0, 3, 1, false, SV), { x: 0, y: -120 });
+    assert.deepEqual(wheelPan(0, 1, 2, false, SV), { x: 0, y: -540 });
+    assert.deepEqual(wheelPan(0, 100, 0, true, SV), { x: -100, y: 0 });
+    assert.deepEqual(wheelPan(30, 100, 0, true, SV), { x: -30, y: -100 });
+    assert.deepEqual(wheelPan(Number.NaN, 0, 0, false, SV), { x: 0, y: 0 });
   });
 });

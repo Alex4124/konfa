@@ -29,6 +29,13 @@
       "when": 1791585806491,
       "tag": "0003_bent_rattler",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791621019437,
+      "tag": "0004_fuzzy_scarecrow",
+      "breakpoints": true
     }
   ]
 }

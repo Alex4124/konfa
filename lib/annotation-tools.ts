@@ -107,6 +107,7 @@ export type AnnotationPrefs = Readonly<{
   shapeVariant: ShapeVariant;
   laserStyle: LaserStyle;
   color: string; // one of PALETTE
+  paperColor: string; // one of PALETTE: the ink on white paper (the workspace's board and materials)
   widths: Readonly<Record<WidthGroup, number>>; // int WIDTH_MIN..WIDTH_MAX, reference units
   textSize: TextSize;
   showAuthors: boolean;
@@ -121,6 +122,7 @@ export const DEFAULT_PREFS: AnnotationPrefs = Object.freeze({
   shapeVariant: "rect",
   laserStyle: "laser",
   color: PALETTE[0].value,
+  paperColor: "#000000",
   widths: Object.freeze({ pen: 4, marker: 16, shape: 4 }),
   textSize: "m",
   showAuthors: false,
@@ -149,6 +151,7 @@ export function normalizePrefs(value: unknown, fallback: AnnotationPrefs = DEFAU
     shapeVariant: oneOf(input.shapeVariant, SHAPE_VARIANTS, fallback.shapeVariant),
     laserStyle: oneOf(input.laserStyle, LASER_STYLE_VALUES, fallback.laserStyle),
     color: paletteColor(input.color, fallback.color),
+    paperColor: paletteColor(input.paperColor, fallback.paperColor),
     widths: { pen: width(widths.pen, fallback.widths.pen), marker: width(widths.marker, fallback.widths.marker), shape: width(widths.shape, fallback.widths.shape) },
     textSize: oneOf(input.textSize, TEXT_SIZE_VALUES, fallback.textSize),
     showAuthors: bool(input.showAuthors, fallback.showAuthors),
@@ -177,7 +180,7 @@ export function mergePrefs(prev: AnnotationPrefs, patch: PrefsPatch): Annotation
 
 export function samePrefs(a: AnnotationPrefs, b: AnnotationPrefs): boolean {
   return a === b || (a.lastDrawTool === b.lastDrawTool && a.lineVariant === b.lineVariant && a.shapeVariant === b.shapeVariant && a.laserStyle === b.laserStyle
-    && a.color === b.color && a.widths.pen === b.widths.pen && a.widths.marker === b.widths.marker && a.widths.shape === b.widths.shape
+    && a.color === b.color && a.paperColor === b.paperColor && a.widths.pen === b.widths.pen && a.widths.marker === b.widths.marker && a.widths.shape === b.widths.shape
     && a.textSize === b.textSize && a.showAuthors === b.showAuthors && a.hotkeys === b.hotkeys && a.fingersDraw === b.fingersDraw);
 }
 

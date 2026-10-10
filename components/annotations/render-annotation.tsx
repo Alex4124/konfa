@@ -60,17 +60,18 @@ function renderMark(item: HitItem, box: Size, key?: string): ReactNode {
   return <path key={key} d={geometry.d} fill="none" stroke={color} strokeWidth={geometry.width} strokeOpacity={marker ? MARKER_OPACITY : undefined} strokeLinecap={cap} strokeLinejoin="round" strokeDasharray={kind === "dashed" ? dashArray(geometry.width) : undefined} pointerEvents="none" />;
 }
 
-// Hover underlay, drawn beneath the marks: a translucent halo of the same outline (text: its box).
-export function renderHighlight(item: HitItem, box: Size, scale = 1): ReactNode {
+// Hover underlay, drawn beneath the marks: a translucent halo of the same outline (text: its box); dark on light paper.
+export function renderHighlight(item: HitItem, box: Size, scale = 1, tone: "dark" | "light" = "dark"): ReactNode {
   const halo = HIGHLIGHT_PX / (scale > 0 ? scale : 1);
+  const ink = tone === "light" ? "#0e192c" : "#ffffff";
   if (item.kind === "text") {
     const text = textBoxNorm(item.data, box);
     if (!text) return null;
-    return <rect key={`${item.id}:hl`} x={text.x * box.width - halo / 2} y={text.y * box.height - halo / 2} width={text.w * box.width + halo} height={text.h * box.height + halo} rx={halo} fill="#ffffff" fillOpacity={.14} stroke="#ffffff" strokeOpacity={.4} strokeWidth={halo / 3} pointerEvents="none" />;
+    return <rect key={`${item.id}:hl`} x={text.x * box.width - halo / 2} y={text.y * box.height - halo / 2} width={text.w * box.width + halo} height={text.h * box.height + halo} rx={halo} fill={ink} fillOpacity={.14} stroke={ink} strokeOpacity={.4} strokeWidth={halo / 3} pointerEvents="none" />;
   }
   const geometry = strokeGeometry(item, box);
   if (!geometry) return null;
-  return <path key={`${item.id}:hl`} d={geometry.d} fill="none" stroke="#ffffff" strokeOpacity={.35} strokeWidth={geometry.width + halo} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />;
+  return <path key={`${item.id}:hl`} d={geometry.d} fill="none" stroke={ink} strokeOpacity={tone === "light" ? .22 : .35} strokeWidth={geometry.width + halo} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />;
 }
 
 // Sizes are in reference units scaled to the box height. Purely visual: hit-testing is geometric (lib/annotation-geometry).

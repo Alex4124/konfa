@@ -17,7 +17,8 @@ export type AnnotationPayload = {
 // seq = D1 rowid; author_name = COALESCE(members.name, '')
 export type Annotation = { id: string; author_id: string; author_name: string; kind: AnnotationKind; payload: string; created_at: number; seq: number };
 // server -> clients, topic "confa", accepted only when participant === undefined
-export type AnnotationOp = { type: "annotations"; v: 1; shareId: string; by: string } & (
+// rev: the surface's revision after this op (workspace surfaces; lib/surface-hub skips re-reading rows it already has)
+export type AnnotationOp = { type: "annotations"; v: 1; shareId: string; by: string; rev?: number } & (
   | { op: "add" | "move" | "edit" | "restore"; rows: Annotation[] }
   | { op: "erase"; ids: string[] }
   | { op: "clear"; upToSeq: number }
@@ -33,14 +34,19 @@ export type Member = { id: string; name: string; role: Role; can_annotate: numbe
 export type Message = { id: string; member_id: string; name: string; body: string; created_at: number };
 export type ShareRequest = { id: string; member_id: string; name: string; status: "pending" | "approved" | "active" | "denied" | "cancelled" | "finished"; created_at: number };
 export type DocumentKind = "pdf" | "image" | "office";
-// The current material of the workspace; surface = annotation share id of its current page, token = signed page-image access.
-export type WorkspaceDoc = { id: string; name: string; kind: DocumentKind; pageCount: number; page: number; pages: Array<[number, number]>; surface: string; token: string };
+// The current material of the workspace: its pages scroll in one column; pos = where the teacher is (page index + fraction of
+// that page above the viewport top, lib/scroll-strip), token = signed page-image access. page and surface are what tabs
+// opened before the scrolling workspace still read.
+export type WorkspaceDoc = { id: string; name: string; kind: DocumentKind; pageCount: number; pos: number; pages: Array<[number, number]>; token: string; page: number; surface: string };
 export type WorkspaceDocument = { id: string; name: string; kind: DocumentKind; pageCount: number; createdAt: number };
-// The teacher's workspace as the server reports it; boardSurface = annotation share id of the current board sheet.
+// The teacher's workspace as the server reports it. The board is an endless column of bands (annotation surfaces b:<id>:<n>):
+// boardPages = bands in use (the lowest one with marks + 1), boardPos = where the teacher is. boardPage and boardSurface are
+// for tabs opened before the scrolling workspace.
 export type WorkspaceView = {
   id: string; open: boolean; version: number;
-  boardPage: number; boardPages: number; boardSurface: string;
+  boardPos: number; boardPages: number;
   boardCollapsed: boolean; docCollapsed: boolean; allDraw: boolean;
+  boardPage: number; boardSurface: string;
   doc: WorkspaceDoc | null;
   documents?: WorkspaceDocument[]; // host only
 };
@@ -52,6 +58,6 @@ export type RoomState = {
   annotations: Annotation[];
   recording: { status: string; url: string | null } | null;
   workspace?: WorkspaceView | null;
-  boardAnnotations?: Annotation[]; // rows of workspace.boardSurface
-  docAnnotations?: Annotation[]; // rows of workspace.doc.surface
+  boardAnnotations?: Annotation[]; // legacy (requests without ?v=2): rows of workspace.boardSurface
+  docAnnotations?: Annotation[]; // legacy: rows of workspace.doc.surface
 };

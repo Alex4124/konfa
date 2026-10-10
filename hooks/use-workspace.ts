@@ -15,17 +15,12 @@ export type WorkspaceControls = {
   view: WorkspaceView | null;
   // A teacher action: the patch shows at once and stays until the polled state reports the version the action produced.
   act(body: Record<string, unknown>, patch?: WorkspacePatch): Promise<boolean>;
-  // Page turns: shown at once, sent once the clicks stop (FLIP_MS), one request per burst.
-  flip(part: "board" | "doc", page: number): void;
 };
-
-const FLIP_MS = 150;
 
 export function useWorkspace({ server, post, refresh, onError }: Options): WorkspaceControls {
   const [pending, setPending] = useState<PendingWorkspace | null>(null);
   const inflight = useRef(0);
   const newest = useRef(0);
-  const timers = useRef(new Map<string, number>());
   const latest = useRef({ post, refresh, onError });
   useEffect(() => { latest.current = { post, refresh, onError }; });
 
@@ -46,7 +41,7 @@ export function useWorkspace({ server, post, refresh, onError }: Options): Works
     } finally {
       inflight.current--;
       if (!ok) setPending(null);
-      else if (inflight.current === 0 && timers.current.size === 0) setPending((current) => current && { ...current, version: newest.current });
+      else if (inflight.current === 0) setPending((current) => current && { ...current, version: newest.current });
       void latest.current.refresh();
     }
     return ok;
@@ -57,20 +52,5 @@ export function useWorkspace({ server, post, refresh, onError }: Options): Works
     return send(body);
   }, [send]);
 
-  const flip = useCallback((part: "board" | "doc", page: number) => {
-    overlay(part === "board" ? { boardPage: page } : { docPage: page });
-    const previous = timers.current.get(part);
-    if (previous !== undefined) window.clearTimeout(previous);
-    timers.current.set(part, window.setTimeout(() => {
-      timers.current.delete(part);
-      void send(part === "board" ? { action: "boardPage", page } : { action: "docPage", page });
-    }, FLIP_MS));
-  }, [send]);
-
-  useEffect(() => {
-    const scheduled = timers.current;
-    return () => { for (const timer of scheduled.values()) window.clearTimeout(timer); };
-  }, []);
-
-  return { view: mergeWorkspace(server, pending), act, flip };
+  return { view: mergeWorkspace(server, pending), act };
 }

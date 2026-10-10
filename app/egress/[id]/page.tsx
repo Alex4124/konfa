@@ -9,11 +9,15 @@ import { SharedScreen } from "@/components/shared-screen";
 import { WorkspaceArea } from "@/components/workspace/workspace-area";
 import type { WorkspaceLayerProps } from "@/components/workspace/pane-chrome";
 import { createStateRefresher, shareSnapshot, useAnnotationSync, windowTimers } from "@/hooks/use-annotation-sync";
-import { acceptsBoard, acceptsDoc, boardContextFromState, docContextFromState, nextStage, selectBoardSnapshot, selectDocSnapshot, type StageChoice } from "@/lib/workspace";
+import { useSurfaceHub } from "@/hooks/use-surface-hub";
+import { useWorkspaceView } from "@/hooks/use-workspace-view";
+import { nextStage, type StageChoice } from "@/lib/workspace";
 import type { RoomState } from "@/lib/confa-types";
 
 const noop = () => {};
 const noTile = () => null;
+const noSave = async () => null;
+const NO_MEMBERS: RoomState["members"] = [];
 
 export default function EgressPage() {
   const params = useParams();
@@ -37,11 +41,12 @@ function RecordingScene({ roomId, access, connected }: { roomId: string; access:
   // Marks belong to the active share only; a leftover screen of someone else is recorded clean.
   const showMarks = Boolean(screen && state?.room.activeShareId && screen.participant.identity === state.room.activeShareOwner);
   const sync = useAnnotationSync({ room, roomId, token: access, self: null, state, requestRefresh: () => void refresh() });
-  const boardSync = useAnnotationSync({ room, roomId, token: access, self: null, state, requestRefresh: () => void refresh(), contextOf: boardContextFromState, accepts: acceptsBoard });
-  const docSync = useAnnotationSync({ room, roomId, token: access, self: null, state, requestRefresh: () => void refresh(), contextOf: docContextFromState, accepts: acceptsDoc });
+  const hub = useSurfaceHub({ room, roomId, token: access, self: null, state });
   // The same stage rule as the room: with both on, whichever started last.
   const [stageMemo, setStageMemo] = useState<{ workspaceKey: string | null; shareKey: string | null; latest: StageChoice | null }>({ workspaceKey: null, shareKey: null, latest: null });
   const view = state?.workspace ?? null;
+  // The recording follows the teacher's scroll like a student.
+  const follow = useWorkspaceView({ room, workspace: view, members: state?.members ?? NO_MEMBERS, isHost: false, save: noSave });
   const workspaceKey = view?.open && !(view.boardCollapsed && (view.docCollapsed || !view.doc)) ? view.id : null;
   const shareKey = showMarks ? state?.room.activeShareId ?? null : null;
   if (stageMemo.workspaceKey !== workspaceKey || stageMemo.shareKey !== shareKey) {
@@ -49,18 +54,18 @@ function RecordingScene({ roomId, access, connected }: { roomId: string; access:
     setStageMemo({ workspaceKey, shareKey, latest });
   }
   const stage = nextStage({ workspaceOpen: Boolean(workspaceKey), shareActive: Boolean(screen), latest: stageMemo.latest, choice: null });
-  const boardLayer: WorkspaceLayerProps = { sync: boardSync, selfId: "", canDraw: false, canModerate: false, armedByDefault: false, coarse: false };
+  const workspaceLayer: WorkspaceLayerProps = { hub, selfId: "", canDraw: false, canModerate: false, armedByDefault: false, coarse: false };
   const [refresher] = useState(() => {
     let stateKey = "";
     return createStateRefresher({
       fetchState: async (signal) => {
-        const response = await fetch(`/api/rooms/${roomId}/state`, { headers: { Authorization: `Bearer ${access}` }, signal });
+        const response = await fetch(`/api/rooms/${roomId}/state?v=2`, { headers: { Authorization: `Bearer ${access}` }, signal });
         if (!response.ok) throw new Error(`state ${response.status}`);
         return await response.json() as RoomState;
       },
-      sinks: [{ sink: sync, select: shareSnapshot }, { sink: boardSync, select: selectBoardSnapshot }, { sink: docSync, select: selectDocSnapshot }],
+      sinks: [{ sink: sync, select: shareSnapshot }],
       onState: (next) => {
-        const rest = { ...next, annotations: [], boardAnnotations: [], docAnnotations: [] };
+        const rest = { ...next, annotations: [] };
         const key = JSON.stringify(rest);
         if (key === stateKey) return;
         stateKey = key;
@@ -95,7 +100,7 @@ function RecordingScene({ roomId, access, connected }: { roomId: string; access:
   return <main className="flex h-screen w-screen flex-col gap-3 overflow-hidden bg-[#0e192c] p-5 text-white">
     <RoomAudioRenderer />
     <div className="flex items-center justify-between"><strong className="text-xl">конфа<span className="text-[#6de7d4]">.</span></strong><span className="text-sm text-slate-400">{state?.room.kind === "webinar" ? "Вебинар" : "Встреча"}</span></div>
-    {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={roomId} isHost={false} canDraw={false} coarse={false} members={[]} renderTile={noTile} board={boardLayer} doc={{ ...boardLayer, sync: docSync }} host={null} upload={null} expanded onExpand={noop} onCollapse={noop} recording /> : screen ? <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#17263e]">
+    {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={roomId} isHost={false} canDraw={false} coarse={false} members={[]} renderTile={noTile} layer={workspaceLayer} follow={follow} host={null} upload={null} expanded onExpand={noop} onCollapse={noop} recording /> : screen ? <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#17263e]">
       <SharedScreen trackRef={screen} resetKey={state?.room.activeShareId}>{showMarks && state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} shareId={state.room.activeShareId} sync={sync} canDraw={false} showSavedAuthors={false} />}</SharedScreen>
     </div> : <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-hidden">
       {cameras.slice(0, 9).map((camera) => <div key={camera.participant.identity} className="relative overflow-hidden rounded-2xl bg-[#17263e]"><VideoTrack trackRef={camera} className="h-full w-full object-cover" /><span className="absolute bottom-3 left-3 rounded-lg bg-[#0e192c]/70 px-2 py-1 text-sm">{camera.participant.name}</span></div>)}
