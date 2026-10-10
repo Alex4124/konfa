@@ -2,7 +2,7 @@ export type RoomKind = "meeting" | "webinar";
 export type Role = "host" | "speaker" | "viewer";
 export type Point = [number, number];
 export type AnnotationKind = "pen" | "line" | "arrow" | "dashed" | "marker" | "rect" | "circle" | "triangle" | "hexagon" | "text";
-export type Tool = AnnotationKind | "eraser" | "move" | "laser"; // laser is never stored
+export type Tool = AnnotationKind | "eraser" | "move" | "laser" | "formula"; // laser is never stored; formula makes a text with chem
 export type UiTool = Tool | "view";
 export type LaserStyle = "laser" | "ink";
 export type AnnotationPayload = {
@@ -13,6 +13,7 @@ export type AnnotationPayload = {
   fontSize?: number; // int 10..72 reference units
   maxWidth?: number; // 0.05..1 of frame width
   w?: number; h?: number; // text plate extent incl. padding, fractions of the frame
+  chem?: 1; // text only: a chemical formula, its lines are laid out by lib/chem-formula
 };
 // seq = D1 rowid; author_name = COALESCE(members.name, '')
 export type Annotation = { id: string; author_id: string; author_name: string; kind: AnnotationKind; payload: string; created_at: number; seq: number };

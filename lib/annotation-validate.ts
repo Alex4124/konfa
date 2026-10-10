@@ -65,8 +65,9 @@ function rebuild(kind: AnnotationKind, data: Record<string, unknown>): Annotatio
     if (fa !== undefined) payload.fa = fa;
     return payload;
   }
-  const { point, text, lines, fontSize, maxWidth, w, h } = data;
+  const { point, text, lines, fontSize, maxWidth, w, h, chem } = data;
   if (!validPoint(point)) return INVALID_POINTS;
+  if (chem !== undefined && chem !== 1) return INVALID_TEXT;
   if (typeof text !== "string" || !text.trim() || text.length > MAX_TEXT_CHARS || text.split("\n").length > MAX_TEXT_LINES) return INVALID_TEXT;
   if (strokeWidth !== undefined) return INVALID_WIDTH;
   if (lines !== undefined && !validLines(lines)) return INVALID_TEXT;
@@ -82,6 +83,7 @@ function rebuild(kind: AnnotationKind, data: Record<string, unknown>): Annotatio
     payload.w = w;
     payload.h = h;
   }
+  if (chem === 1) payload.chem = 1;
   if (fa !== undefined) payload.fa = fa;
   return payload;
 }

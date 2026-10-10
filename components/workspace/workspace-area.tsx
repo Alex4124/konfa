@@ -49,7 +49,7 @@ const EMPTY: Size = { width: 0, height: 0 };
 const NO_STAGE = { width: 0, height: 0, vw: 0, vh: 0 }; // the whole workspace with its strip, and the window
 const NO_PREFIX = "\u0000"; // matches no surface
 // Tools whose marks stay inside one band of the board: its seams show while one of them is armed.
-const BAND_TOOLS: ReadonlySet<UiTool> = new Set<UiTool>(["line", "arrow", "dashed", "rect", "circle", "triangle", "hexagon", "text", "move"]);
+const BAND_TOOLS: ReadonlySet<UiTool> = new Set<UiTool>(["line", "arrow", "dashed", "rect", "circle", "triangle", "hexagon", "text", "formula", "move"]);
 const SCROLL_KEYS: Readonly<Record<string, number>> = { PageDown: 0.9, PageUp: -0.9, ArrowDown: 0.12, ArrowUp: -0.12 }; // of a screen
 
 // Keys typed into a control, a text or an open menu are not scroll keys.
@@ -205,10 +205,10 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     return () => window.removeEventListener("keydown", listener);
   }, [isHost, recording]);
 
-  // A press anywhere else in the workspace saves the open text (the text itself, the toolbar and its menus do not).
+  // A press anywhere else in the workspace saves the open text (the text itself, its preview and buttons, the toolbar and its menus do not).
   function commitTexts(event: ReactPointerEvent<HTMLDivElement>) {
     const target = event.target as Element | null;
-    if (!editing || target?.closest?.("textarea, .annotation-toolbar, [data-slot=popover-content], [role=dialog], [role=alertdialog]")) return;
+    if (!editing || target?.closest?.("textarea, [data-text-editor], .annotation-toolbar, [data-slot=popover-content], [role=dialog], [role=alertdialog]")) return;
     for (const strip of strips()) strip?.commitText();
   }
 

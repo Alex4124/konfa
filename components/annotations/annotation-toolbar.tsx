@@ -1,13 +1,13 @@
 "use client";
 
 import type { ReactNode, SyntheticEvent } from "react";
-import { ArrowUpRight, Check, ChevronDown, Circle, Ellipsis, Eraser, Eye, Grab, Hexagon, Highlighter, Keyboard, Minus, Pen, RectangleHorizontal, Redo2, Sparkles, Trash2, Triangle, Type, Undo2, UserRound, WandSparkles, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Circle, Ellipsis, Eraser, Eye, FlaskConical, Grab, Hexagon, Highlighter, Keyboard, Minus, Pen, RectangleHorizontal, Redo2, Sparkles, Trash2, Triangle, Type, Undo2, UserRound, WandSparkles, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { unitsToPx } from "@/lib/annotation-geometry";
-import { DRAW_TOOLS, isCreatingTool, LASER_STYLES, LINE_VARIANTS, MARKER_OPACITY, PALETTE, SHAPE_VARIANTS, TEXT_SIZES, TOOL_META, toolShortcut, toolTitle, variantGroup, widthGroup, WIDTH_MAX, WIDTH_MIN, type AnnotationPrefs, type PrefsPatch, type TextSize, type ToolbarLayout, type ToolIconName, type WidthGroup } from "@/lib/annotation-tools";
+import { DRAW_TOOLS, LASER_STYLES, LINE_VARIANTS, markKindOf, MARKER_OPACITY, PALETTE, SHAPE_VARIANTS, TEXT_SIZES, TOOL_META, toolShortcut, toolTitle, variantGroup, widthGroup, WIDTH_MAX, WIDTH_MIN, type AnnotationPrefs, type PrefsPatch, type TextSize, type ToolbarLayout, type ToolIconName, type WidthGroup } from "@/lib/annotation-tools";
 import type { UiTool } from "@/lib/confa-types";
 
 export type ToolbarPicker = "laser" | "line" | "shape" | "color" | "tools" | "style" | "more";
@@ -36,7 +36,7 @@ type Props = {
   onFingersDraw: (enabled: boolean) => void;
 };
 
-const ICONS: Record<ToolIconName, LucideIcon> = { Eye, WandSparkles, Pen, Highlighter, Minus, ArrowUpRight, RectangleHorizontal, Circle, Triangle, Hexagon, Type, Grab, Eraser };
+const ICONS: Record<ToolIconName, LucideIcon> = { Eye, WandSparkles, Pen, Highlighter, Minus, ArrowUpRight, RectangleHorizontal, Circle, Triangle, Hexagon, Type, FlaskConical, Grab, Eraser };
 const HOTKEY_TOOLS = (Object.keys(TOOL_META) as UiTool[]).filter((tool) => tool !== "view" && TOOL_META[tool].key);
 const activeClass = "bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7] hover:text-[#10243a]";
 const inactiveClass = "text-white hover:bg-white/10 hover:text-white";
@@ -64,8 +64,9 @@ export function AnnotationToolbar(p: Props) {
   const side = vertical ? "right" : "top";
   const sizeClass = layout.compact && coarse ? "size-11" : "";
   const drawMode = tool !== "view" && tool !== "laser";
-  const styleTool = p.textStyle ? "text" : isCreatingTool(tool) ? tool : prefs.lastDrawTool;
-  const styleDisabled = !p.textStyle && !isCreatingTool(tool);
+  const markKind = markKindOf(tool);
+  const styleTool = p.textStyle ? "text" : markKind ?? prefs.lastDrawTool;
+  const styleDisabled = !p.textStyle && !markKind;
   const color = p.textStyle?.color ?? prefs.color;
   const textSize = p.textStyle?.size ?? prefs.textSize;
   const group = widthGroup(styleTool);
@@ -152,7 +153,7 @@ export function AnnotationToolbar(p: Props) {
   let items: ReactNode[];
   if (!drawMode) items = [toolButton("view"), laserButton, separator("s1"), drawButton, separator("s2"), more];
   else if (layout.compact) {
-    const current = isCreatingTool(tool) || tool === "move" || tool === "eraser" ? tool : prefs.lastDrawTool;
+    const current = markKind || tool === "move" || tool === "eraser" ? tool : prefs.lastDrawTool;
     items = [
       toolButton("view"), laserButton, separator("s1"),
       <Popover key="tools" {...pickerProps("tools")}>
@@ -173,7 +174,7 @@ export function AnnotationToolbar(p: Props) {
       toolButton("pen"), toolButton("marker"),
       split("line", lineTool, variantGroup(tool) === "line", "Вид линии", LINE_VARIANTS.map((next) => menuTool(next))),
       split("shape", shapeTool, variantGroup(tool) === "shape", "Вид фигуры", SHAPE_VARIANTS.map((next) => menuTool(next))),
-      toolButton("text"), separator("s2"),
+      toolButton("text"), toolButton("formula"), separator("s2"),
       toolButton("move"), toolButton("eraser"), separator("s3"),
       <Popover key="color" {...pickerProps("color")}>
         <PopoverTrigger asChild><button type="button" disabled={styleDisabled} title={`Цвет пометок: ${colorLabel}`} aria-label={`Цвет пометок: ${colorLabel}`} className="mx-1 size-7 shrink-0 rounded-full border-2 border-white/80 outline-none focus-visible:ring-2 focus-visible:ring-[#6de7d4] focus-visible:ring-offset-2 focus-visible:ring-offset-[#12243a] disabled:opacity-40" style={{ backgroundColor: color }} /></PopoverTrigger>

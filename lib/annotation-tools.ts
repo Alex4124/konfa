@@ -6,7 +6,7 @@ export const LASER_COLOR = "#ff3b5c";
 export const MARKER_OPACITY = 0.38;
 export const WIDTH_MIN = 1;
 export const WIDTH_MAX = 24;
-export const COMPACT_AREA_WIDTH = 840; // the full toolbar is about 833 px wide
+export const COMPACT_AREA_WIDTH = 880; // the full toolbar is 875 px wide
 export const CHIP_GAP = 10;
 export const CHIP_MAX_CHARS = 24;
 
@@ -29,7 +29,7 @@ export type TextSize = "s" | "m" | "l";
 export type WidthGroup = "pen" | "marker" | "shape";
 export type ToolGroup = "mode" | "draw" | "line" | "shape" | "edit";
 // lucide-react export names; the toolbar maps them with an exhaustive Record<ToolIconName, LucideIcon>.
-export type ToolIconName = "Eye" | "WandSparkles" | "Pen" | "Highlighter" | "Minus" | "ArrowUpRight" | "RectangleHorizontal" | "Circle" | "Triangle" | "Hexagon" | "Type" | "Grab" | "Eraser";
+export type ToolIconName = "Eye" | "WandSparkles" | "Pen" | "Highlighter" | "Minus" | "ArrowUpRight" | "RectangleHorizontal" | "Circle" | "Triangle" | "Hexagon" | "Type" | "FlaskConical" | "Grab" | "Eraser";
 // code: KeyboardEvent.code; key: what the UI shows; dashed: draw the icon with a dash pattern.
 export type ToolMeta = { readonly label: string; readonly icon: ToolIconName; readonly group: ToolGroup; readonly code?: string; readonly key?: string; readonly dashed?: boolean };
 
@@ -39,6 +39,7 @@ export const TOOL_META: Readonly<Record<UiTool, ToolMeta>> = {
   pen: { label: "Карандаш", icon: "Pen", group: "draw", code: "KeyP", key: "P" },
   marker: { label: "Маркер", icon: "Highlighter", group: "draw", code: "KeyM", key: "M" },
   text: { label: "Текст", icon: "Type", group: "draw", code: "KeyT", key: "T" },
+  formula: { label: "Формула", icon: "FlaskConical", group: "draw", code: "KeyF", key: "F" },
   line: { label: "Прямая линия", icon: "Minus", group: "line" },
   arrow: { label: "Стрелка", icon: "ArrowUpRight", group: "line", code: "KeyA", key: "A" },
   dashed: { label: "Пунктир", icon: "Minus", group: "line", dashed: true },
@@ -52,8 +53,8 @@ export const TOOL_META: Readonly<Record<UiTool, ToolMeta>> = {
 
 export const LINE_VARIANTS: readonly LineVariant[] = ["line", "arrow", "dashed"];
 export const SHAPE_VARIANTS: readonly ShapeVariant[] = ["rect", "circle", "triangle", "hexagon"];
-// Compact toolbar grid (3 per row): pen marker text / line arrow dashed / rect circle triangle / hexagon move eraser.
-export const DRAW_TOOLS: readonly Exclude<Tool, "laser">[] = ["pen", "marker", "text", "line", "arrow", "dashed", "rect", "circle", "triangle", "hexagon", "move", "eraser"];
+// Compact toolbar grid (3 per row): pen marker text / line arrow dashed / rect circle triangle / hexagon move eraser / formula.
+export const DRAW_TOOLS: readonly Exclude<Tool, "laser">[] = ["pen", "marker", "text", "line", "arrow", "dashed", "rect", "circle", "triangle", "hexagon", "move", "eraser", "formula"];
 export const LASER_STYLES: ReadonlyArray<{ readonly value: LaserStyle; readonly label: string }> = [
   { value: "laser", label: "Указка" },
   { value: "ink", label: "Исчезающий карандаш" },
@@ -74,6 +75,11 @@ const TOOL_BY_CODE: ReadonlyMap<string, UiTool> = new Map((Object.keys(TOOL_META
 
 export function isCreatingTool(tool: UiTool): tool is AnnotationKind {
   return CREATING.has(tool);
+}
+
+// The kind of mark the tool makes; null for tools that make none. «Формула» makes a text.
+export function markKindOf(tool: UiTool): AnnotationKind | null {
+  return tool === "formula" ? "text" : isCreatingTool(tool) ? tool : null;
 }
 
 export function variantGroup(tool: UiTool): "line" | "shape" | null {
