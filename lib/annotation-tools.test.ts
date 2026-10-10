@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import type { AnnotationKind, UiTool } from "@/lib/confa-types";
 import {
   CHIP_GAP, CHIP_MAX_CHARS, COMPACT_AREA_WIDTH, DEFAULT_PREFS, DRAW_TOOLS, LASER_COLOR, LINE_VARIANTS, MARKER_OPACITY, PALETTE, PREFS_KEY, SHAPE_VARIANTS,
-  TOOL_META, WIDTH_MAX, WIDTH_MIN, chipFontPx, chipName, defaultToolFor, hotkeyFor, isCreatingTool, markAnchor, mergePrefs, normalizePrefs, parsePrefs,
+  TOOL_META, WIDTH_MAX, WIDTH_MIN, chipFontPx, chipName, defaultToolFor, hotkeyFor, isCreatingTool, markAnchor, markKindOf, mergePrefs, normalizePrefs, parsePrefs,
   placeChip, resolveEscape, samePrefs, serializePrefs, toolbarLayoutFor, toolPrefsPatch, toolShortcut, toolTitle, variantGroup, widthGroup, type AnnotationPrefs,
   type HotkeyEvent,
 } from "./annotation-tools.ts";
 
 const KINDS: AnnotationKind[] = ["pen", "line", "arrow", "dashed", "marker", "rect", "circle", "triangle", "hexagon", "text"];
-const UI_TOOLS: UiTool[] = [...KINDS, "eraser", "move", "laser", "view"];
+const UI_TOOLS: UiTool[] = [...KINDS, "formula", "eraser", "move", "laser", "view"];
 
 const key = (over: Partial<HotkeyEvent>): HotkeyEvent => ({ code: "", key: "", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, repeat: false, isComposing: false, ...over });
 
@@ -40,24 +40,30 @@ describe("constants", () => {
   });
 
   it("lists every drawing tool once in the compact grid order", () => {
-    assert.equal(DRAW_TOOLS.length, 12);
+    assert.equal(DRAW_TOOLS.length, 13);
     assert.deepEqual([...DRAW_TOOLS].sort(), UI_TOOLS.filter((t) => t !== "laser" && t !== "view").sort());
     assert.deepEqual(DRAW_TOOLS.slice(0, 3), ["pen", "marker", "text"]);
-    assert.deepEqual(DRAW_TOOLS.slice(9), ["hexagon", "move", "eraser"]);
+    assert.deepEqual(DRAW_TOOLS.slice(9), ["hexagon", "move", "eraser", "formula"]);
   });
 });
 
 describe("tool helpers", () => {
   it("isCreatingTool: stored kinds only", () => {
     for (const kind of KINDS) assert.equal(isCreatingTool(kind), true, kind);
-    for (const tool of ["eraser", "move", "laser", "view"] as UiTool[]) assert.equal(isCreatingTool(tool), false, tool);
+    for (const tool of ["formula", "eraser", "move", "laser", "view"] as UiTool[]) assert.equal(isCreatingTool(tool), false, tool);
+  });
+
+  it("markKindOf: the kind a tool stores; «Формула» makes a text", () => {
+    for (const kind of KINDS) assert.equal(markKindOf(kind), kind);
+    assert.equal(markKindOf("formula"), "text");
+    for (const tool of ["eraser", "move", "laser", "view"] as UiTool[]) assert.equal(markKindOf(tool), null, tool);
   });
 
   it("widthGroup and variantGroup", () => {
     assert.equal(widthGroup("pen"), "pen");
     assert.equal(widthGroup("marker"), "marker");
     for (const tool of [...LINE_VARIANTS, ...SHAPE_VARIANTS]) assert.equal(widthGroup(tool), "shape", tool);
-    for (const tool of ["text", "laser", "view", "move", "eraser"] as UiTool[]) assert.equal(widthGroup(tool), null, tool);
+    for (const tool of ["text", "formula", "laser", "view", "move", "eraser"] as UiTool[]) assert.equal(widthGroup(tool), null, tool);
     for (const tool of LINE_VARIANTS) assert.equal(variantGroup(tool), "line");
     for (const tool of SHAPE_VARIANTS) assert.equal(variantGroup(tool), "shape");
     for (const tool of ["pen", "marker", "text", "laser", "view", "move", "eraser"] as UiTool[]) assert.equal(variantGroup(tool), null, tool);
@@ -81,7 +87,7 @@ describe("tool helpers", () => {
     assert.deepEqual(toolPrefsPatch("arrow"), { lastDrawTool: "arrow", lineVariant: "arrow" });
     assert.deepEqual(toolPrefsPatch("dashed"), { lastDrawTool: "dashed", lineVariant: "dashed" });
     assert.deepEqual(toolPrefsPatch("circle"), { lastDrawTool: "circle", shapeVariant: "circle" });
-    for (const tool of ["laser", "view", "move", "eraser"] as UiTool[]) assert.deepEqual(toolPrefsPatch(tool), {}, tool);
+    for (const tool of ["formula", "laser", "view", "move", "eraser"] as UiTool[]) assert.deepEqual(toolPrefsPatch(tool), {}, tool);
   });
 
   it("defaultToolFor: armed fine pointers get lastDrawTool, everyone else Просмотр", () => {
@@ -185,7 +191,7 @@ describe("prefs", () => {
 
 describe("hotkeyFor", () => {
   it("maps P M A R T V E L by code", () => {
-    const expected: Record<string, UiTool> = { KeyP: "pen", KeyM: "marker", KeyA: "arrow", KeyR: "rect", KeyT: "text", KeyV: "move", KeyE: "eraser", KeyL: "laser" };
+    const expected: Record<string, UiTool> = { KeyP: "pen", KeyM: "marker", KeyA: "arrow", KeyR: "rect", KeyT: "text", KeyF: "formula", KeyV: "move", KeyE: "eraser", KeyL: "laser" };
     for (const [code, tool] of Object.entries(expected)) assert.deepEqual(hotkeyFor(key({ code, key: code.slice(3).toLowerCase() })), { type: "tool", tool }, code);
   });
 

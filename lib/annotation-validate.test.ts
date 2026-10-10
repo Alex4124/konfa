@@ -120,6 +120,13 @@ describe("validateAnnotationPayload: text", () => {
     assert.equal(error(validateAnnotationPayload("text", { ...text, point: [0.3, 0.95], h: 0.1 })), "Некорректные координаты");
     ok(validateAnnotationPayload("text", { ...text, point: [0.8, 0.5], w: 0.20005 }));
   });
+
+  it("keeps the formula flag on text only, and only as 1", () => {
+    assert.deepEqual(ok(validateAnnotationPayload("text", { ...text, chem: 1 })), { ...text, chem: 1 });
+    for (const chem of [0, 2, true, "1", null]) assert.equal(error(validateAnnotationPayload("text", { ...text, chem })), "Некорректный текст");
+    assert.equal("chem" in ok(validateAnnotationPayload("text", { ...text, chem: undefined })), false);
+    assert.equal("chem" in ok(validateAnnotationPayload("pen", { ...pen, chem: 1 })), false);
+  });
 });
 
 describe("validatePatch", () => {
@@ -153,6 +160,13 @@ describe("validatePatch", () => {
     const payload = ok(result);
     assert.deepEqual(payload.point, [0.55, 0.5]);
     assert.equal(payload.fontSize, 40);
+  });
+
+  it("a formula stays a formula through an edit, and a patch cannot make one", () => {
+    const formula = { ...text, text: "H2O", lines: ["H2O"], chem: 1 as const };
+    assert.equal(ok(validatePatch("text", formula, { text: "H2SO4", lines: ["H2SO4"], w: 0.1, h: 0.05 })).chem, 1);
+    assert.equal(ok(validatePatch("text", formula, { color: "#000000", chem: null })).chem, 1);
+    assert.equal("chem" in ok(validatePatch("text", text, { color: "#000000", chem: 1 })), false);
   });
 
   it("drops stale lines when the text changes without new lines", () => {

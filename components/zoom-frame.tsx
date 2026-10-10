@@ -81,9 +81,10 @@ export function useFrame(): FrameInfo {
 const centreOf = (size: Size): XY => ({ x: size.width / 2, y: size.height / 2 });
 
 // Fine pointers: −, {pct}%, + (shown on hover until zoomed). Coarse pointers: only a «{pct}% ✕» reset chip while zoomed.
+// Out of the way while a text's buttons are shown: they sit inside the frame, below this row, and may reach its corner.
 function ZoomControls({ label, percent, zoomed, canZoomIn, className, onZoom, onReset }: { label: string; percent: number; zoomed: boolean; canZoomIn: boolean; className: string; onZoom: (factor: number) => void; onReset: () => void }) {
   const round = "rounded-full text-white hover:bg-white/10 hover:text-white";
-  return <div data-gesture-ignore className={`pointer-events-none absolute z-20 flex items-center transition-opacity group-has-data-[annotating=true]/screen:opacity-0 ${className}`}>
+  return <div data-gesture-ignore className={`pointer-events-none absolute z-20 flex items-center transition-opacity group-has-data-[annotating=true]/screen:opacity-0 group-has-data-text-editor/screen:invisible ${className}`}>
     <div role="group" aria-label={label} className={`flex items-center gap-0.5 rounded-full border border-white/15 bg-[#12243a]/90 p-0.5 text-white shadow-xl transition-opacity pointer-coarse:hidden ${zoomed ? "pointer-events-auto" : "opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/screen:pointer-events-auto group-hover/screen:opacity-100"}`}>
       <Button variant="ghost" size="icon-sm" title="Отдалить" aria-label="Отдалить" disabled={!zoomed} className={round} onClick={() => onZoom(1 / ZOOM_STEP)}><ZoomOut /></Button>
       <Button variant="ghost" size="sm" title="Сбросить масштаб" aria-label={`Масштаб ${percent}%. Сбросить масштаб`} className={`h-8 min-w-12 px-2 text-xs tabular-nums ${round}`} onClick={onReset}>{percent}%</Button>

@@ -19,7 +19,8 @@ import { abortGesture, gestureInput, gestureStep, initialGesture, isTentativeRes
 import { DRAFT_SEND_MS, randomId, type DraftItem } from "@/lib/annotation-drafts";
 import { laserLife, pushLaserPoints } from "@/lib/annotation-laser";
 import { defaultMaxWidth, fitMaxWidth, nearestTextSize, normalizeText, placeTextAnchor, TEXT_LINE_HEIGHT, TEXT_PAD_Y, textFits, textLines, textMetrics } from "@/lib/annotation-text";
-import { defaultToolFor, isCreatingTool, LASER_COLOR, markAnchor, resolveEscape, widthGroup, type HotkeyAction, type PrefsPatch, type TextSize, type ToolbarLayout } from "@/lib/annotation-tools";
+import { defaultToolFor, isCreatingTool, LASER_COLOR, markAnchor, markKindOf, resolveEscape, widthGroup, type HotkeyAction, type PrefsPatch, type TextSize, type ToolbarLayout } from "@/lib/annotation-tools";
+import { formulaMetrics } from "@/lib/chem-formula";
 import { edgeExit, type EdgeExit } from "@/lib/scroll-strip";
 import type { AnnotationStore, BoardItem } from "@/lib/annotation-sync";
 import type { AnnotationKind, AnnotationPayload, LaserStyle, Point, UiTool } from "@/lib/confa-types";
@@ -284,6 +285,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   const synced = board.shareId === shareId;
   const active = permitted && synced;
   const tool: UiTool = permitted ? armed : "view";
+  const textTool = markKindOf(tool) === "text"; // «Текст» and «Формула»
   const drawing = ready && active && tool !== "view" && frame.interaction === "draw";
   const win = svgEl?.ownerDocument.defaultView ?? null;
   const items = board.shareId === shareId ? board.items : EMPTY_ITEMS;
@@ -408,12 +410,14 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   }
 
   function openText(point: Point) {
+    const chem = tool === "formula";
     const units = TEXT_SIZE_UNITS[prefs.textSize];
     const textPx = fontPx(units, size.height);
     if (textPx * scale < READABLE_TEXT_PX && textPx > 0) frame.ensureScale(READABLE_TEXT_PX / textPx, point);
-    const maxWidth = fitMaxWidth(point[0], defaultMaxWidth(size, textPx));
+    // An equation is one long line: it may take the whole width to the right of the click.
+    const maxWidth = fitMaxWidth(point[0], chem ? 1 : defaultMaxWidth(size, textPx));
     const anchor = placeTextAnchor(point, { w: maxWidth, h: (TEXT_LINE_HEIGHT + 2 * TEXT_PAD_Y) * textPx / Math.max(1, size.height) });
-    showEditor({ key: randomId(), point: anchor, color: ink, fontSize: units, maxWidth, text: "" });
+    showEditor({ key: randomId(), point: anchor, color: ink, fontSize: units, maxWidth, text: "", chem });
   }
 
   function openEdit(item: BoardItem) {
@@ -422,7 +426,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     const fontSize = textUnits(data);
     const text = data.text ?? textLines(data).join("\n");
     const maxWidth = data.maxWidth ?? fitMaxWidth(data.point[0], defaultMaxWidth(size, fontPx(fontSize, size.height)));
-    showEditor({ key: randomId(), targetId: item.id, point: data.point, color: data.color, fontSize, maxWidth, text, original: { text, color: data.color, fontSize } });
+    showEditor({ key: randomId(), targetId: item.id, point: data.point, color: data.color, fontSize, maxWidth, text, chem: data.chem === 1, original: { text, color: data.color, fontSize } });
   }
 
   function closeEditor(state: TextEditorState) {
@@ -443,7 +447,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       }
       return true;
     }
-    const metrics = textMetrics({ text, fontSize: state.fontSize, maxWidth: state.maxWidth, box: size, measure: getMeasureEm() });
+    const metrics = (state.chem ? formulaMetrics : textMetrics)({ text, fontSize: state.fontSize, maxWidth: state.maxWidth, box: size, measure: getMeasureEm() });
     if (!textFits(metrics)) {
       notify("Слишком длинный текст для этого места", "annotation-text-long");
       return false;
@@ -458,7 +462,8 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       return true;
     }
     const point = translateAnnotation({ color: state.color, point: state.point, w: metrics.w, h: metrics.h }, 0, 0).payload.point ?? state.point;
-    void actions.add("text", { ...style, point, fa }, randomId()).then((result) => {
+    // An edit keeps the mark's flag by itself: a patch can neither set nor drop it.
+    void actions.add("text", state.chem ? { ...style, point, fa, chem: 1 } : { ...style, point, fa }, randomId()).then((result) => {
       // Not saved after the retries: give the text back unless another editor is open.
       if (!result.ok && (result.code === "network" || result.code === "rate")) setEditing((current) => current ?? { ...state, key: randomId() });
     });
@@ -469,7 +474,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     if (editing) closeEditor(editing);
   }
 
-  // Toolbar colour and size also restyle the open editor; a new text re-fits its width to the size.
+  // Toolbar colour and size also restyle the open editor; a new text re-fits its width to the size (a formula's does not depend on it).
   function changePrefs(patch: PrefsPatch) {
     updatePrefs(patch);
     restyle(patch);
@@ -481,7 +486,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     if (patch.color !== undefined) next.color = patch.color;
     if (patch.textSize !== undefined) {
       next.fontSize = TEXT_SIZE_UNITS[patch.textSize];
-      if (!next.targetId) next.maxWidth = fitMaxWidth(next.point[0], defaultMaxWidth(size, fontPx(next.fontSize, size.height)));
+      if (!next.targetId && !next.chem) next.maxWidth = fitMaxWidth(next.point[0], defaultMaxWidth(size, fontPx(next.fontSize, size.height)));
     }
     setEditing(next);
   }
@@ -505,7 +510,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       commitText();
       return false;
     }
-    if (tool === "text") {
+    if (textTool) {
       // The editor opens on click, the event iOS allows to raise the keyboard.
       if (kind === "mouse") event.preventDefault();
       return false;
@@ -604,10 +609,10 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   function hover(event: ReactPointerEvent<SVGSVGElement>) {
     if (event.pointerType === "touch" || event.buttons !== 0 || strokeRef.current) return;
     let id: string | null = null;
-    if (!editing && (tool === "move" || tool === "eraser" || tool === "text")) {
+    if (!editing && (tool === "move" || tool === "eraser" || textTool)) {
       const rect = event.currentTarget.getBoundingClientRect();
       const point = normFromClient(event.clientX, event.clientY, rect);
-      id = tool === "text" ? pickText(point, rect, event.pointerType)?.id ?? null : pickForMove(changeableItems(), point, rect, hitRadiusFor(event.pointerType));
+      id = textTool ? pickText(point, rect, event.pointerType)?.id ?? null : pickForMove(changeableItems(), point, rect, hitRadiusFor(event.pointerType));
     }
     if (id !== live.hoverId()) live.set({ hoverId: id }, win);
   }
@@ -798,14 +803,14 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     if (strokeRef.current?.pointerId === event.pointerId) dropStroke();
   }
 
-  // Text tool: a click on own (or, for moderators, any) text edits it, elsewhere starts a new one.
+  // Text and formula tools: a click on own (or, for moderators, any) text edits it, elsewhere starts a new one.
   function click(event: ReactMouseEvent<SVGSVGElement>) {
     if (suppressClick.current) {
       suppressClick.current = false;
       return;
     }
     const pointerType = pointerTypeOf(event);
-    if (!drawing || tool !== "text" || editing || !actions) return;
+    if (!drawing || !textTool || editing || !actions) return;
     // A palm next to the stylus never opens an editor.
     if (pointerType === "touch" && (frame.penOnly || now() - gestureRef.current.lastPenAt < PALM_GUARD_MS)) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -936,8 +941,8 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
 
   useEffect(() => { if (!permitted) onRevoked(); }, [permitted]);
 
-  const cursor = !drawing ? "default" : tool === "laser" ? LASER_CURSOR : tool === "text" ? "text" : tool === "move" ? "grab" : tool === "pen" ? "url('/cursors/pen.svg') 4 28, crosshair" : tool === "marker" ? "url('/cursors/marker.svg') 4 28, crosshair" : tool === "eraser" ? "url('/cursors/eraser.svg') 7 25, crosshair" : "crosshair";
-  const editorMounted = active && ready && (editing !== null || tool === "text" || tool === "move");
+  const cursor = !drawing ? "default" : tool === "laser" ? LASER_CURSOR : textTool ? "text" : tool === "move" ? "grab" : tool === "pen" ? "url('/cursors/pen.svg') 4 28, crosshair" : tool === "marker" ? "url('/cursors/marker.svg') 4 28, crosshair" : tool === "eraser" ? "url('/cursors/eraser.svg') 7 25, crosshair" : "crosshair";
+  const editorMounted = active && ready && (editing !== null || textTool || tool === "move");
   // The svg is select-none: a mouse stroke across text marks would select them, and a press on a selection starts a native drag (pointercancel).
 
   return <>
