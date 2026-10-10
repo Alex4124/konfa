@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { LiveKitRoom } from "@livekit/components-react";
-import { createLocalVideoTrack, type LocalVideoTrack } from "livekit-client";
+import { createLocalVideoTrack, type LocalVideoTrack, type RoomOptions } from "livekit-client";
 import { ArrowLeft, Camera, CameraOff, Mic, MicOff, Video, Users, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RoomView } from "@/components/room-view";
@@ -15,6 +15,11 @@ type Joined = {
   member: { id: string; name: string; role: Role; canAnnotate: boolean };
   sessionToken: string; livekitToken: string; livekitUrl: string; guestUrl: string; kind: RoomKind;
 };
+
+// Each camera arrives at the size of its tile (in screen pixels, so a scaled display stays sharp) and stops while nobody
+// shows it; a publisher does not encode the layers nobody asked for. One object for the life of the page: a new one
+// would make LiveKitRoom build a new room.
+const ROOM_OPTIONS: RoomOptions = { adaptiveStream: { pixelDensity: "screen" }, dynacast: true };
 
 export default function RoomPage() {
   const params = useParams();
@@ -111,7 +116,7 @@ export default function RoomPage() {
 
   if (conferenceEnded) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => router.push("/")}>На главную</Button></div></main>;
 
-  if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
+  if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} options={ROOM_OPTIONS} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
     <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); router.push("/"); }} onEnded={() => { setJoined(null); setConferenceEnded(true); }} connectionError={error} />
   </LiveKitRoom>;
 
