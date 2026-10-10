@@ -5,9 +5,10 @@ import { Check, FileText, FolderOpen, LoaderCircle, Trash, Upload, X } from "luc
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollStripView, SurfaceLayer, type StripApi } from "@/components/workspace/scroll-strip-view";
-import { CollapseButton, headerButton, PageJump, PaneShell, type Orientation, type PaneApi, type PaneDrawing, type PaneEditing, type PaneFollow, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
+import { CollapseButton, headerButton, PageJump, PaneShell, type Orientation, type PaneApi, type PaneDrawing, type PaneEditing, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
 import type { MaterialUpload } from "@/hooks/use-material-upload";
-import { stripLayout } from "@/lib/scroll-strip";
+import { useFollowTarget, type WorkspaceFollow } from "@/hooks/use-workspace-view";
+import { stepTile, stripLayout } from "@/lib/scroll-strip";
 import { DOC_GAP, docSurface } from "@/lib/workspace";
 import type { WorkspaceDoc, WorkspaceView } from "@/lib/confa-types";
 
@@ -87,7 +88,7 @@ type Props = {
   roomId: string;
   layer: WorkspaceLayerProps;
   drawing: PaneDrawing;
-  follow: PaneFollow;
+  follow: WorkspaceFollow;
   highlight: boolean;
   orientation: Orientation;
   host: WorkspaceHostActions | null;
@@ -103,7 +104,10 @@ export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, 
   const fileInput = useRef<HTMLInputElement>(null);
   const strip = useRef<StripApi>(null);
   const [dragging, setDragging] = useState(false);
-  const [reading, setReading] = useState({ doc: doc?.id ?? null, page: 0 }); // the page at the reading line, for «3 / 12»
+  const [reading, setReading] = useState({ doc: doc?.id ?? null, page: 0 }); // the page «3 / 12» names (lib/scroll-strip readingTile)
+  const docId = doc?.id ?? null;
+  const key = useMemo(() => ({ ws: view.id, docId }), [view.id, docId]);
+  const target = useFollowTarget(follow, "doc", key, doc?.pos ?? 0, Boolean(host));
   const pick = () => fileInput.current?.click();
   const pages = doc?.pages;
   const layout = useMemo(() => stripLayout((pages ?? []).map(([width, height]) => width / height), DOC_GAP), [pages]);
@@ -129,7 +133,8 @@ export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, 
     },
   } : undefined;
   const controls = <>
-    {doc && <PageJump page={page} count={doc.pageCount} onJump={host ? (next) => strip.current?.scrollTo(next, true) : undefined} />}
+    {doc && <PageJump page={page} count={doc.pageCount} onJump={host ? (next) => strip.current?.scrollTo(next, true) : undefined}
+      onStep={host ? (by) => { if (strip.current) strip.current.scrollTo(stepTile(strip.current.position(), page, by, doc.pageCount), true); } : undefined} />}
     {host && <MaterialsMenu view={view} host={host} busy={Boolean(upload)} onPick={pick} />}
     {host && <CollapseButton part="doc" orientation={orientation} onClick={() => host.collapse("doc", true)} />}
   </>;
@@ -139,7 +144,7 @@ export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, 
       event.target.value = "";
       if (file) host.uploadFile(file);
     }} />}
-    {doc && pages ? <ScrollStripView api={strip} layout={layout} pixelWidth={widest} resetKey={doc.id} fitAspect={firstAspect >= 1 ? firstAspect : null} host={Boolean(host)} start={doc.pos} target={follow.target} onView={follow.report}
+    {doc && pages ? <ScrollStripView api={strip} layout={layout} pixelWidth={widest} resetKey={doc.id} fitAspect={firstAspect >= 1 ? firstAspect : null} host={Boolean(host)} start={doc.pos} target={target} onIntent={() => follow.touch("doc")} onView={(seen, settled) => follow.report("doc", key, seen, settled)}
       interaction={drawing.interaction} fingersDraw={drawing.fingersDraw} penOnly={drawing.penOnly} onPenOnlyChange={drawing.onPenOnlyChange} zoomLabel="Масштаб материала"
       onTile={(index) => setReading({ doc: doc.id, page: Math.max(0, index) })} scrollLabel={(position) => `Стр. ${Math.min(doc.pageCount, Math.floor(position) + 1)}`}
       placeholder={(index) => <BlankPage page={index} />}

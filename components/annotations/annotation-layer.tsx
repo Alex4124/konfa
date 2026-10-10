@@ -615,6 +615,12 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   function move(event: ReactPointerEvent<SVGSVGElement>) {
     const relay = relayRef.current;
     if (relay && relay.pointerId === event.pointerId) {
+      // Its pointerup was lost (e.g. alt-tab): end the hand-off, or both layers would count as busy from here on.
+      if (event.pointerType !== "touch" && event.buttons === 0) {
+        relayRef.current = null;
+        relay.sink.cancel();
+        return;
+      }
       relay.sink.move(inputOf(event));
       return;
     }

@@ -160,7 +160,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
 
   const workspace = useWorkspace({ server: state?.workspace, post: (body) => api("workspace", body), refresh, onError: setError });
   const view = workspace.view;
-  const follow = useWorkspaceView({ room, workspace: view, members: state?.members ?? NO_MEMBERS, isHost: role === "host", save: (body) => api("workspace", body) });
+  const follow = useWorkspaceView({ room, members: state?.members ?? NO_MEMBERS, isHost: role === "host", save: (body) => api("workspace", body) });
   const materials = useMaterialUpload({ roomId: id, token: joined.sessionToken, onUploaded: (docId) => workspace.act({ action: "docSelect", docId }), onError: setError });
   const workspaceOpen = Boolean(view?.open);
   const canDrawBoard = workspaceOpen && canAnnotateBoard(self ?? { role, board_draw: 0 }, view);

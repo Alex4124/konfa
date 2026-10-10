@@ -362,6 +362,40 @@ describe("surface hub: writes and history", () => {
     assert.equal(hub.history("b:").canUndo, true);
   });
 
+  it("an action on another surface while an undo is on its way leaves nothing to redo", async () => {
+    const { hub, server } = setup();
+    await hub.surface(band(2)).actions?.add("pen", pen, ID(1));
+    // The undo's request stays open until released.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((done) => { release = done; });
+    const post = server.post;
+    server.post = async (body) => {
+      if (body.action === "erase") await held;
+      return post(body);
+    };
+    const undo = hub.undo("b:");
+    await settle();
+    await hub.surface(band(3)).actions?.add("pen", pen, ID(2));
+    release();
+    await undo;
+    assert.deepEqual(hub.history("b:"), { canUndo: true, canRedo: false });
+    assert.equal((await hub.redo("b:")).id, null);
+  });
+
+  it("reset empties the cleared surfaces at once, also the ones that scrolled away", async () => {
+    const { hub, server, read } = setup();
+    server.seed(band(0), row(1));
+    server.seed(page(0), row(2));
+    const release = hub.acquire(band(0));
+    hub.acquire(page(0));
+    await read();
+    release(); // band 0 scrolled out of view: its store stays in the cache
+    assert.deepEqual(ids(hub, band(0)), [ID(1)]);
+    hub.reset("b:");
+    assert.deepEqual(ids(hub, band(0)), [], "before any read");
+    assert.deepEqual(ids(hub, page(0)), [ID(2)]);
+  });
+
   it("reset forgets history and pending work of the cleared surfaces and reads them again", async () => {
     const { hub, server, read } = setup();
     hub.acquire(band(0));

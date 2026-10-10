@@ -7,7 +7,6 @@ import type { FrameInteraction } from "@/components/zoom-frame";
 import type { StripApi } from "@/components/workspace/scroll-strip-view";
 import type { TextSize } from "@/lib/annotation-tools";
 import type { SurfaceHub } from "@/lib/surface-hub";
-import type { PartView } from "@/lib/view-sync";
 
 export type WorkspacePart = "board" | "doc";
 export type Orientation = "row" | "column";
@@ -25,8 +24,6 @@ export type WorkspaceHostActions = {
 };
 // What a part needs to draw: the tool key and ink both parts share, the frame interaction, and the pen-only flag (one for both).
 export type PaneDrawing = { toolKey: string; color: string; interaction: FrameInteraction; fingersDraw: boolean; penOnly: boolean; onPenOnlyChange(value: boolean): void; seams: boolean };
-// How a part follows the teacher: the teacher's own view goes out through `report`, everyone else is held to `target`.
-export type PaneFollow = { target: { pos: number; span: number | null } | null; report?: (view: PartView, settled: boolean) => void };
 // What the workspace asks of a part: its strip, and (the material) the page a "clear" would act on.
 export type PaneApi = { strip: StripApi | null; current?: () => number };
 export type PaneEditing = (part: WorkspacePart, style: { color: string; size: TextSize } | null) => void;
@@ -52,16 +49,16 @@ export function CollapseButton({ part, orientation, onClick }: { part: Workspace
 }
 
 // «‹ 3 / 12 ›»: where the view is. The teacher steps to the neighbouring page or types a page number; students only see it.
-export function PageJump({ page, count, onJump }: { page: number; count: number; onJump?: (page: number) => void }) {
+export function PageJump({ page, count, onJump, onStep }: { page: number; count: number; onJump?: (page: number) => void; onStep?: (by: -1 | 1) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
-  if (!onJump) return <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300"><span className="max-sm:hidden">Стр. </span>{page + 1} / {count}</span>;
+  if (!onJump || !onStep) return <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300"><span className="max-sm:hidden">Стр. </span>{page + 1} / {count}</span>;
   const go = () => {
     const wanted = Number.parseInt(draft ?? "", 10);
     setDraft(null);
     if (Number.isFinite(wanted)) onJump(Math.min(count, Math.max(1, wanted)) - 1);
   };
   return <div className="flex items-center" role="group" aria-label={`Страница ${page + 1} из ${count}`}>
-    <Button type="button" variant="ghost" size="icon-sm" title="Предыдущая страница" aria-label="Предыдущая страница" disabled={page <= 0} className={headerButton} onClick={() => onJump(page - 1)}><ChevronLeft /></Button>
+    <Button type="button" variant="ghost" size="icon-sm" title="Предыдущая страница" aria-label="Предыдущая страница" disabled={page <= 0} className={headerButton} onClick={() => onStep(-1)}><ChevronLeft /></Button>
     <input aria-label="Номер страницы" inputMode="numeric" value={draft ?? String(page + 1)} title="Введите номер страницы и нажмите Enter"
       className="h-7 w-9 rounded-md border border-white/15 bg-[#0e192c] text-center text-xs tabular-nums text-white outline-none focus:border-[#6de7d4]"
       onFocus={(event) => { setDraft(String(page + 1)); event.currentTarget.select(); }}
@@ -73,7 +70,7 @@ export function PageJump({ page, count, onJump }: { page: number; count: number;
         event.stopPropagation();
       }} />
     <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300">/ {count}</span>
-    <Button type="button" variant="ghost" size="icon-sm" title="Следующая страница" aria-label="Следующая страница" disabled={page >= count - 1} className={headerButton} onClick={() => onJump(page + 1)}><ChevronRight /></Button>
+    <Button type="button" variant="ghost" size="icon-sm" title="Следующая страница" aria-label="Следующая страница" disabled={page >= count - 1} className={headerButton} onClick={() => onStep(1)}><ChevronRight /></Button>
   </div>;
 }
 

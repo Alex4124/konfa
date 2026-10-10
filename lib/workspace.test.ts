@@ -93,9 +93,10 @@ describe("board permissions", () => {
     assert.equal(context.nameOf("b"), "Борис");
   });
 
-  it("a student reaches the bands in use, the first blank one and the teacher's window", () => {
+  it("a student reaches the bands in use and the teacher's window, and cannot creep further band by band", () => {
     assert.equal(studentBandLimit(row({ board_pages: 3, board_pos: 0 })), 4, "the window at the top shows bands 0..4");
-    assert.equal(studentBandLimit(row({ board_pages: 9, board_pos: 1.5 })), 9, "the first blank band below the marks");
+    assert.equal(studentBandLimit(row({ board_pages: 9, board_pos: 1.5 })), 8, "the lowest band with marks");
+    assert.equal(studentBandLimit(row({ board_pages: 5, board_pos: 0 })), 4, "drawing on band 4 does not open band 5");
     assert.equal(studentBandLimit(row({ board_pages: 3, board_pos: 20.7 })), 24, "the teacher scrolled on to clean paper");
     assert.equal(studentBandLimit(row({ board_pages: 200, board_pos: 199.5 })), MAX_BOARD_BANDS - 1);
     assert.equal(studentBandLimit(row({ board_pages: 1, board_pos: Number.NaN })), 4);
@@ -136,8 +137,8 @@ describe("workspaceUpdate", () => {
     assert.ok("error" in workspaceUpdate(row({ doc_id: DOC }), { action: "view", part: "doc", pos: 0 }, { ...ready, id: "other" }));
   });
 
-  it("clearing the board resets its extent and position", () => {
-    assert.deepEqual(workspaceUpdate(row({ board_pages: 40, board_pos: 31.5 }), { action: "boardClear" }, null), { set: { board_pos: 0, board_page: 0, board_pages: 1 }, clearBoard: true });
+  it("clearing the board resets its extent; the position stays the teacher's to move", () => {
+    assert.deepEqual(workspaceUpdate(row({ board_pages: 40, board_pos: 31.5 }), { action: "boardClear" }, null), { set: { board_pages: 1 }, clearBoard: true });
   });
 
   it("tabs opened before the scrolling workspace are told to reload", () => {

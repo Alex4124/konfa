@@ -45,6 +45,8 @@ export type AnnotationClientOptions = {
   // pick the store with the newest one; onRecord tells the owner a new user action was recorded here.
   nextTag?(): number;
   onRecord?(): void;
+  // Counts the user's new actions on every surface of the owner: an undo that was on its way across one keeps no redo.
+  actionsElsewhere?(): number;
 };
 
 export const NOTICE_TEXT: Record<SyncErrorCode, string> = {
@@ -525,12 +527,13 @@ export function createAnnotationClient(o: AnnotationClientOptions): AnnotationCl
     const shareId = o.shareIdOf();
     if (!shareId || !sameShare(shareId)) return failure("share-changed");
     const to = from === "undo" ? "redo" : "undo";
-    const startGeneration = generation;
+    const actions = () => generation + (o.actionsElsewhere?.() ?? 0);
+    const startGeneration = actions();
     store.mutateHistory((h) => h[from][h[from].length - 1] === entry ? { ...h, [from]: h[from].slice(0, -1) } : h);
     const { result, next } = await perform(shareId, inverseOf(entry));
     if (!sameShare(shareId)) return result;
-    if (next && (to === "undo" || generation === startGeneration)) store.mutateHistory((h) => pushStack(h, to, { ...next, tag: nextTag() }));
-    else if (!result.ok && RETRIABLE.has(result.code) && generation === startGeneration) store.mutateHistory((h) => pushStack(h, from, entry));
+    if (next && (to === "undo" || actions() === startGeneration)) store.mutateHistory((h) => pushStack(h, to, { ...next, tag: nextTag() }));
+    else if (!result.ok && RETRIABLE.has(result.code) && actions() === startGeneration) store.mutateHistory((h) => pushStack(h, from, entry));
     return result;
   };
 

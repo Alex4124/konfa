@@ -9,7 +9,7 @@ import { AnnotationToolbar, type ToolbarPicker } from "@/components/annotations/
 import { ClearAllDialog } from "@/components/annotations/clear-dialog";
 import { BoardPane } from "@/components/workspace/board-pane";
 import { DocumentPane } from "@/components/workspace/document-pane";
-import { PaneRail, type PaneApi, type PaneDrawing, type PaneFollow, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
+import { PaneRail, type PaneApi, type PaneDrawing, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
 import { useAnnotationHotkeys } from "@/hooks/use-annotation-hotkeys";
 import { useAnnotationPrefs, useArmedTool } from "@/hooks/use-annotation-prefs";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -96,10 +96,6 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     onPenOnlyChange: setPenOnly,
     seams: canDraw && BAND_TOOLS.has(tool),
   };
-  // The teacher's view of a part goes out to everyone; everyone else is held to it.
-  const following = (part: WorkspacePart): PaneFollow => host
-    ? { target: null, report: (seen, settled) => follow.report(part, seen, settled) }
-    : { target: follow.target(part) };
   // The ring shows which part the toolbar acts on, when there are two to choose from.
   const highlight = (part: WorkspacePart) => toolbarVisible && boardShown && docShown && active === part;
   // The toolbar shows and changes the ink for white paper; the screen share keeps its own colour.
@@ -224,11 +220,11 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     <div ref={columnRef} className={`flex min-h-0 min-w-0 flex-1 ${column ? "flex-row" : "flex-col"}`}>
       <div ref={areaRef} className={`flex min-h-0 min-w-0 flex-1 gap-2 p-2 ${layout.orientation === "row" ? "flex-row" : "flex-col"}`}>
         {layout.board === "rail" && rail("board")}
-        {layout.board === "pane" && <BoardPane api={boardApi} view={view} layer={layer} drawing={drawing} follow={following("board")} highlight={highlight("board")} orientation={layout.orientation} host={host} onActivate={setFocus} onEditing={onEditing} />}
+        {layout.board === "pane" && <BoardPane api={boardApi} view={view} layer={layer} drawing={drawing} follow={follow} highlight={highlight("board")} orientation={layout.orientation} host={host} onActivate={setFocus} onEditing={onEditing} />}
         {layout.grid && <div aria-label="Видео участников" className="grid min-h-0 min-w-0 flex-1 auto-rows-[minmax(120px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
           {members.map((person) => renderTile(person, "grid"))}
         </div>}
-        {layout.doc === "pane" && <DocumentPane api={docApi} view={view} roomId={roomId} layer={layer} drawing={drawing} follow={following("doc")} highlight={highlight("doc")} orientation={layout.orientation} host={host} upload={upload} onActivate={setFocus} onEditing={onEditing} />}
+        {layout.doc === "pane" && <DocumentPane api={docApi} view={view} roomId={roomId} layer={layer} drawing={drawing} follow={follow} highlight={highlight("doc")} orientation={layout.orientation} host={host} upload={upload} onActivate={setFocus} onEditing={onEditing} />}
         {layout.doc === "rail" && rail("doc")}
       </div>
       {toolbarVisible && <div className={column ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 pb-1"}>
@@ -250,7 +246,10 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel className="border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white">Отмена</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={() => host.clearBoard()}>Очистить доску</AlertDialogAction>
+          <AlertDialogAction variant="destructive" onClick={() => {
+            host.clearBoard();
+            boardApi.current?.strip?.rewind(); // a clean board starts from its top, for everyone
+          }}>Очистить доску</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>}

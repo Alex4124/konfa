@@ -1,10 +1,11 @@
 "use client";
 
-import { useImperativeHandle, useRef, type CSSProperties, type Ref } from "react";
+import { useImperativeHandle, useMemo, useRef, type CSSProperties, type Ref } from "react";
 import { ArrowUpToLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollStripView, SurfaceLayer, type StripApi } from "@/components/workspace/scroll-strip-view";
-import { CollapseButton, headerButton, PaneShell, type Orientation, type PaneApi, type PaneDrawing, type PaneEditing, type PaneFollow, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
+import { CollapseButton, headerButton, PaneShell, type Orientation, type PaneApi, type PaneDrawing, type PaneEditing, type WorkspaceHostActions, type WorkspaceLayerProps, type WorkspacePart } from "@/components/workspace/pane-chrome";
+import { useFollowTarget, type WorkspaceFollow } from "@/hooks/use-workspace-view";
 import { boardExtent, uniformLayout } from "@/lib/scroll-strip";
 import { BOARD_ASPECT, BOARD_GRID_COLUMNS, BOARD_PIXEL_WIDTH, boardSurface, MAX_BOARD_BANDS } from "@/lib/workspace";
 import type { WorkspaceView } from "@/lib/confa-types";
@@ -25,7 +26,7 @@ type Props = {
   view: WorkspaceView;
   layer: WorkspaceLayerProps;
   drawing: PaneDrawing;
-  follow: PaneFollow;
+  follow: WorkspaceFollow;
   highlight: boolean;
   orientation: Orientation;
   host: WorkspaceHostActions | null;
@@ -38,13 +39,16 @@ type Props = {
 export function BoardPane({ view, layer, drawing, follow, highlight, orientation, host, api, onActivate, onEditing }: Props) {
   const strip = useRef<StripApi>(null);
   const bands = view.boardPages;
+  const docId = view.doc?.id ?? null;
+  const key = useMemo(() => ({ ws: view.id, docId }), [view.id, docId]);
+  const target = useFollowTarget(follow, "board", key, view.boardPos, Boolean(host));
   useImperativeHandle(api, () => ({ get strip() { return strip.current; } }), []);
   const controls = host && <>
     <Button type="button" variant="ghost" size="icon-sm" title="В начало доски" aria-label="В начало доски" className={headerButton} onClick={() => strip.current?.scrollTo(0, true)}><ArrowUpToLine /></Button>
     <CollapseButton part="board" orientation={orientation} onClick={() => host.collapse("board", true)} />
   </>;
   return <PaneShell part="board" title="Доска" controls={controls} highlight={highlight} onActivate={onActivate}>
-    <ScrollStripView api={strip} layout={BOARD_LAYOUT} pixelWidth={BOARD_PIXEL_WIDTH} resetKey={view.id} fitAspect={null} host={Boolean(host)} start={view.boardPos} target={follow.target} onView={follow.report}
+    <ScrollStripView api={strip} layout={BOARD_LAYOUT} pixelWidth={BOARD_PIXEL_WIDTH} resetKey={view.id} fitAspect={null} host={Boolean(host)} start={view.boardPos} target={target} onIntent={() => follow.touch("board")} onView={(seen, settled) => follow.report("board", key, seen, settled)}
       extent={(bottom) => boardExtent({ bands, bottom, bandHeight: BAND_ROWS, max: MAX_BOARD_BANDS })} seamless
       interaction={drawing.interaction} fingersDraw={drawing.fingersDraw} penOnly={drawing.penOnly} onPenOnlyChange={drawing.onPenOnlyChange} zoomLabel="Масштаб доски" background={paper}
       tile={(index, slot) => <>

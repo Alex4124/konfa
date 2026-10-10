@@ -480,6 +480,12 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       if (event.cancelable && (event.touches.length > 1 || start)) event.preventDefault();
     };
     const onGesture = (event: Event) => event.preventDefault();
+    // The viewport clips content larger than itself, and the browser may scroll it natively to reveal the caret of an open
+    // text: the transform is the only scrolling there is, so that is undone at once.
+    const onScroll = () => {
+      if (element.scrollTop) element.scrollTop = 0;
+      if (element.scrollLeft) element.scrollLeft = 0;
+    };
 
     zoomer.current = {
       current,
@@ -507,6 +513,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     element.addEventListener("wheel", onWheel, { passive: false });
     element.addEventListener("touchmove", onTouchMove, { passive: false });
     element.addEventListener("gesturestart", onGesture);
+    element.addEventListener("scroll", onScroll);
     return () => {
       element.removeEventListener("pointerdown", onDown, true);
       element.removeEventListener("pointermove", onMove, true);
@@ -519,6 +526,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       element.removeEventListener("wheel", onWheel);
       element.removeEventListener("touchmove", onTouchMove);
       element.removeEventListener("gesturestart", onGesture);
+      element.removeEventListener("scroll", onScroll);
       if (raf) win.cancelAnimationFrame(raf);
       if (flingFrame) win.cancelAnimationFrame(flingFrame);
       if (settle) win.clearTimeout(settle);

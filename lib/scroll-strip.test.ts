@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { boardExtent, edgeExit, EMPTY_LAYOUT, followWidth, NO_TILES, posAt, stripLayout, stripWidth, tileAt, topAt, uniformLayout, visibleTiles } from "./scroll-strip.ts";
+import { boardExtent, edgeExit, EMPTY_LAYOUT, followWidth, NO_TILES, posAt, readingTile, stepTile, stripLayout, stripWidth, tileAt, topAt, uniformLayout, visibleTiles } from "./scroll-strip.ts";
 
 const near = (actual: number, expected: number, eps = 1e-9) => assert.ok(Math.abs(actual - expected) <= eps, `${actual} ≉ ${expected}`);
 const BAND = 9 / 16;
@@ -127,5 +127,68 @@ describe("edgeExit", () => {
 
   it("a jump across the whole band exits through the far edge", () => {
     assert.deepEqual(edgeExit({ x: 0, y: 120 }, { x: 100, y: 520 }, rect), { edge: "bottom", x: 45, y: 300 });
+  });
+});
+
+describe("the page indicator and its arrows", () => {
+  const tall = stripLayout(Array.from({ length: 10 }, () => 0.7), 0.012); // portrait pages, each taller than the screen
+  const slides = stripLayout(Array.from({ length: 12 }, () => 16 / 9), 0.012); // three and a bit to a tall screen
+  const screen = 1.2, tallScreen = 1.9;
+  const shown = (layout: typeof tall, position: number, rows: number) => {
+    const top = Math.min(topAt(layout, position), Math.max(0, layout.total - rows));
+    return { at: posAt(layout, top), reading: readingTile(layout, top, top + rows) };
+  };
+
+  it("names the page at the reading line", () => {
+    assert.equal(readingTile(tall, 0, screen), 0);
+    assert.equal(readingTile(tall, topAt(tall, 3.5), topAt(tall, 3.5) + screen), 3);
+    assert.equal(readingTile(tall, topAt(tall, 3.8), topAt(tall, 3.8) + screen), 4, "page 5 has come a third up the screen");
+    assert.equal(readingTile(EMPTY_LAYOUT, 0, 1), -1);
+  });
+
+  it("a jump to a page names that page, also when pages are much shorter than the screen", () => {
+    for (let page = 0; page < 8; page++) assert.equal(shown(slides, page, tallScreen).reading, page);
+    assert.equal(readingTile(slides, topAt(slides, 4.6), topAt(slides, 4.6) + tallScreen), 5, "more than half of the slide has scrolled away");
+  });
+
+  it("scrolled to the very end it is the last page; a strip that fits whole stays on the first", () => {
+    assert.equal(shown(slides, 11, tallScreen).reading, 11);
+    assert.equal(shown(tall, 9, screen).reading, 9);
+    assert.equal(readingTile(stripLayout([16 / 9, 16 / 9], 0.012), 0, 2), 0);
+  });
+
+  it("«›» always shows the next page from its top, «‹» the one before; neither stays in place", () => {
+    for (const [layout, rows] of [[tall, screen], [slides, tallScreen]] as const) {
+      const count = layout.tops.length;
+      let place = shown(layout, 0, rows);
+      const seen = [place.reading];
+      for (let guard = 0; guard < 40 && place.reading < count - 1; guard++) {
+        const target = stepTile(place.at, place.reading, 1, count);
+        const next = shown(layout, target, rows);
+        assert.ok(next.at > place.at, `forward from ${place.at} went to ${next.at}`);
+        assert.ok(next.reading > place.reading);
+        place = next;
+        seen.push(place.reading);
+      }
+      assert.equal(place.reading, count - 1);
+      for (let guard = 0; guard < 40 && place.at > 0; guard++) {
+        const target = stepTile(place.at, place.reading, -1, count);
+        const next = shown(layout, target, rows);
+        assert.ok(next.at < place.at, `back from ${place.at} went to ${next.at}`);
+        assert.ok(next.reading < place.reading);
+        place = next;
+      }
+      assert.deepEqual([place.at, place.reading], [0, 0]);
+      if (layout === tall) assert.deepEqual(seen, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "page by page");
+    }
+  });
+
+  it("from the middle of a page «‹» goes to the page before the one the indicator names, or to its top", () => {
+    assert.equal(stepTile(5.3, 5, -1, 10), 4);
+    assert.equal(stepTile(5.8, 6, -1, 10), 5);
+    assert.equal(stepTile(5.8, 6, 1, 10), 7);
+    assert.equal(stepTile(5.3, 5, 1, 10), 6);
+    assert.equal(stepTile(0, 0, -1, 10), 0);
+    assert.equal(stepTile(9, 9, 1, 10), 9);
   });
 });

@@ -46,7 +46,7 @@ function RecordingScene({ roomId, access, connected }: { roomId: string; access:
   const [stageMemo, setStageMemo] = useState<{ workspaceKey: string | null; shareKey: string | null; latest: StageChoice | null }>({ workspaceKey: null, shareKey: null, latest: null });
   const view = state?.workspace ?? null;
   // The recording follows the teacher's scroll like a student.
-  const follow = useWorkspaceView({ room, workspace: view, members: state?.members ?? NO_MEMBERS, isHost: false, save: noSave });
+  const follow = useWorkspaceView({ room, members: state?.members ?? NO_MEMBERS, isHost: false, save: noSave });
   const workspaceKey = view?.open && !(view.boardCollapsed && (view.docCollapsed || !view.doc)) ? view.id : null;
   const shareKey = showMarks ? state?.room.activeShareId ?? null : null;
   if (stageMemo.workspaceKey !== workspaceKey || stageMemo.shareKey !== shareKey) {

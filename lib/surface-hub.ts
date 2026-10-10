@@ -65,7 +65,7 @@ export function createSurfaceHub(o: SurfaceHubOptions): SurfaceHub {
   const entries = new Map<string, Entry>();
   const historyListeners = new Set<() => void>();
   const flags = new Map<string, HistoryFlags>();
-  let tags = 0, uses = 0;
+  let tags = 0, uses = 0, recorded = 0;
   let batchTimer: number | null = null;
   let resyncTimer: number | null = null;
   let lastResync = -Infinity;
@@ -110,8 +110,10 @@ export function createSurfaceHub(o: SurfaceHubOptions): SurfaceHub {
       onNotice: o.onNotice,
       requestRefresh: () => void flight.run(),
       nextTag: () => ++tags,
-      // A new action here: what was undone elsewhere can no longer be redone.
+      actionsElsewhere: () => recorded,
+      // A new action here: what was undone elsewhere can no longer be redone (nor what an undo on its way would leave).
       onRecord: () => {
+        recorded++;
         for (const other of entries.values()) if (other.id !== id) other.store.mutateHistory((history) => history.redo.length ? { ...history, redo: [] } : history);
       },
     }) : null;
@@ -293,6 +295,8 @@ export function createSurfaceHub(o: SurfaceHubOptions): SurfaceHub {
           entry.store.mutatePending(() => EMPTY_PENDING);
           entry.store.mutateHistory(() => EMPTY_HISTORY);
         });
+        // The marks go at once, also on surfaces that have scrolled away: they must not show again before the next read.
+        entry.store.applySnapshot(entry.store.beginSnapshot(), entry.id, []);
         entry.rev = -1;
       }
       emitHistory();

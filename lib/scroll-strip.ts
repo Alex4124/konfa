@@ -11,6 +11,7 @@ type Size = Readonly<{ width: number; height: number }>;
 
 export const EMPTY_LAYOUT: StripLayout = Object.freeze({ tops: [], heights: [], total: 0 });
 export const NO_TILES: StripWindow = Object.freeze({ first: 0, last: -1 });
+export const READING_LINE = 0.35; // of the viewport, from its top: the page there is "the current page"
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const round = (value: number) => Math.round(value * 1e4) / 1e4;
@@ -72,6 +73,25 @@ export function visibleTiles(layout: StripLayout, top: number, bottom: number, o
   // `from` may fall in the gap under tile `first`.
   if (layout.tops[first] + layout.heights[first] < from && first < count - 1) first++;
   return { first, last: Math.max(first, tileAt(layout, to)) };
+}
+
+// The page a «3 / 12» indicator names for rows [top, bottom]: the one at the reading line. A page at the top row keeps the name
+// while half of it still shows (pages much shorter than the viewport), so a jump to a page always names that page; scrolled to
+// the very end, it is the last page.
+export function readingTile(layout: StripLayout, top: number, bottom: number): number {
+  const count = layout.tops.length;
+  if (!count) return -1;
+  if (top > 1e-6 && bottom >= layout.total - 1e-6) return count - 1;
+  const first = clamp(Math.floor(posAt(layout, top)), 0, count - 1);
+  const line = top + Math.min(READING_LINE * Math.max(0, bottom - top), 0.5 * layout.heights[first]);
+  return Math.max(first, tileAt(layout, line));
+}
+
+// Where «‹» and «›» go from position `at` (the top row) while the indicator names `reading`: always a page top above or
+// below the top row, and never the page the indicator already names.
+export function stepTile(at: number, reading: number, by: -1 | 1, count: number): number {
+  const target = by > 0 ? Math.max(Math.floor(at + 1e-3) + 1, reading + 1) : Math.min(Math.ceil(at - 1e-3) - 1, reading - 1);
+  return clamp(target, 0, Math.max(0, count - 1));
 }
 
 // How far down the board may be scrolled: one blank band below the lowest band with marks and below what is on screen,

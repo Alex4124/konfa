@@ -101,11 +101,11 @@ export function canModerateBoard(member: Pick<BoardMember, "role"> | null | unde
   return member?.role === "host";
 }
 
-// The last band a student may draw on: the bands in use, the first blank one, and what the teacher's window shows (the teacher
-// may have scrolled on to clean paper). Never further, so a student cannot stretch everyone's board. The teacher has no limit.
+// The last band a student may draw on: the bands in use and what the teacher's window shows (the teacher may have scrolled on
+// to clean paper). Never further, so a student cannot stretch everyone's board band by band. The teacher has no limit.
 export function studentBandLimit(row: Pick<WorkspaceRow, "board_pages" | "board_pos">): number {
   const shown = Math.floor(Number.isFinite(row.board_pos) ? Math.max(0, row.board_pos) : 0) + STUDENT_REACH_BANDS;
-  return Math.min(MAX_BOARD_BANDS - 1, Math.max(row.board_pages, shown));
+  return Math.min(MAX_BOARD_BANDS - 1, Math.max(row.board_pages - 1, shown));
 }
 
 // The sync context of one workspace surface: who may draw there right now, and whose names to show.
@@ -150,7 +150,7 @@ export function workspaceUpdate(row: WorkspaceRow, input: Record<string, unknown
       return { set: {}, docPos: { docId: doc.id, pos: Math.min(pos, doc.page_count - 1e-4) }, quiet: true };
     }
     case "boardClear":
-      return { set: { board_pos: 0, board_page: 0, board_pages: 1 }, clearBoard: true };
+      return { set: { board_pages: 1 }, clearBoard: true };
     // What tabs opened before the scrolling workspace still send.
     case "boardPage":
     case "addBoardPage":
