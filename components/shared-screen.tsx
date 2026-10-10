@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { VideoTrack } from "@livekit/components-react";
+import { RemoteVideoTrack, type ElementInfo } from "livekit-client";
 import { ZoomFrame, type FrameInteraction } from "@/components/zoom-frame";
 import type { Size } from "@/lib/annotation-geometry";
 
@@ -23,6 +24,7 @@ type Props = {
 };
 
 const PROVISIONAL_MS = 1200;
+const FULL_SIZE = 4096; // asked for until the share reports its own size
 
 function provisionalFrame(publication: TrackRef["publication"]): Frame | null {
   const settings = publication.track?.mediaStreamTrack?.getSettings();
@@ -47,6 +49,22 @@ export function SharedScreen({ trackRef, children, className = "", frameless = f
   }
 
   const frameChanged = useEffectEvent((next: number) => onFrameChange?.(next));
+  const track = publication.track;
+
+  // A share always arrives whole. With adaptive stream on (app/r/[id]/page.tsx) the room asks for a picture the size of
+  // its element, but this one is zoomed by a CSS transform and the frame takes its size from the picture: the smaller
+  // layer would blur the zoom and halve the frame. An explicit size cannot raise what adaptive stream asks for, so the
+  // track is told about a viewer as large as the share itself.
+  useEffect(() => {
+    if (!(track instanceof RemoteVideoTrack) || !track.isAdaptiveStream) return;
+    const pin: ElementInfo = {
+      element: {}, visible: true, pictureInPicture: false, visibilityChangedAt: 0,
+      width: () => publication.dimensions?.width || FULL_SIZE, height: () => publication.dimensions?.height || FULL_SIZE,
+      observe() {}, stopObserving() {},
+    };
+    track.observeElementInfo(pin);
+    return () => track.stopObservingElementInfo(pin);
+  }, [track, publication]);
 
   useEffect(() => {
     const video = videoRef.current;

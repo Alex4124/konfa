@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
+import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks } from "@livekit/components-react";
 import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication, type RemoteParticipant } from "livekit-client";
 import { Copy, Ellipsis, ExternalLink, EyeOff, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, PictureInPicture2, Presentation, Radio, Smile, Users, Video, VideoOff, X } from "lucide-react";
 import { toast } from "sonner";
@@ -11,6 +11,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Toaster } from "@/components/ui/sonner";
 import { clusterButton, PresentationArea, type PresentationLayerProps } from "@/components/presentation-area";
 import { MirrorPlaceholder, PresenterPip, type PipNotice } from "@/components/presenter-pip";
+import { ParticipantTile, type TileLayout } from "@/components/participant-tile";
+import { TileGrid } from "@/components/participant-tiles";
 import { AuthorMarks, DepartedAuthors } from "@/components/annotations/author-marks";
 import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
 import { WorkspaceArea } from "@/components/workspace/workspace-area";
@@ -23,6 +25,7 @@ import { useWorkspace } from "@/hooks/use-workspace";
 import { useWorkspaceView } from "@/hooks/use-workspace-view";
 import { useMaterialUpload } from "@/hooks/use-material-upload";
 import { boardRange, canAnnotateBoard, nextStage, type StageChoice } from "@/lib/workspace";
+import { orderMembers } from "@/lib/tile-grid";
 import { resetArmedTool } from "@/hooks/use-annotation-prefs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useVisualViewportReset } from "@/hooks/use-visual-viewport-reset";
@@ -102,6 +105,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const pendingShareRequests = state?.shareRequests.filter((item) => item.status === "pending") || [];
   const approvedShareRequest = state?.shareRequests.find((item) => item.status === "approved");
   const visibleMembers = state?.members.filter((person) => activeIds.has(person.id)) || [];
+  // The tiles: the teacher first, this member last. The participants list keeps the order of joining.
+  const tileMembers = orderMembers(visibleMembers, joined.member.id);
   const pipSupported = useDocumentPipSupported();
   const { pipWindow, open: openPipWindow, close: closePip } = useDocumentPip("Пометки — Конфа");
   const showPipNotice = (text: string) => setPipNotice((current) => ({ id: (current?.id ?? 0) + 1, text }));
@@ -247,8 +252,10 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       setCam(room.localParticipant.isCameraEnabled);
       if (!room.localParticipant.isCameraEnabled) { cameraProcessor.current = null; appliedBackgroundUrl.current = null; }
     };
-    room.on(RoomEvent.LocalTrackPublished, syncMedia); room.on(RoomEvent.LocalTrackUnpublished, syncMedia);
-    return () => { room.off(RoomEvent.LocalTrackPublished, syncMedia); room.off(RoomEvent.LocalTrackUnpublished, syncMedia); };
+    // Muted and unmuted too: the teacher's «Выключить звук» mutes the track without unpublishing it.
+    const events = [RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted] as const;
+    for (const event of events) room.on(event, syncMedia);
+    return () => { for (const event of events) room.off(event, syncMedia); };
   }, [room]);
 
   async function action(path: string, body: Record<string, unknown>, loading = "") {
@@ -483,13 +490,10 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     finally { setBusy(""); }
   }
 
-  function renderParticipantTile(person: RoomState["members"][number], layout: "grid" | "top" | "left") {
-    const video = cameras.find((track) => track.participant.identity === person.id);
-    const size = layout === "grid" ? "min-h-0" : layout === "top" ? "h-full aspect-video shrink-0" : "w-full aspect-video shrink-0";
-    return <div key={person.id} className={`relative min-w-0 overflow-hidden rounded-xl bg-[#213650] ${size}`}>
-      {video ? <VideoTrack trackRef={video} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><span className="grid h-12 w-12 place-items-center rounded-full bg-[#6de7d4]/20 text-lg font-semibold text-[#9af4e7]">{person.name.charAt(0).toUpperCase()}</span></div>}
-      <span className={`absolute left-2 max-w-[calc(100%-16px)] truncate rounded bg-[#0b1728]/70 text-xs ${layout === "grid" ? "bottom-2 px-2 py-1" : "bottom-1 px-1.5 py-0.5"}`}>{person.name}{person.id === joined.member.id ? " (вы)" : ""}{person.raised_hand ? " ✋" : ""}</span>
-    </div>;
+  function renderParticipantTile(person: RoomState["members"][number], layout: TileLayout) {
+    const camera = cameras.find((track) => track.participant.identity === person.id);
+    return <ParticipantTile key={person.id} name={person.name} self={person.id === joined.member.id} raisedHand={Boolean(person.raised_hand)} canSpeak={person.role !== "viewer"}
+      participant={participants.find((item) => item.identity === person.id)} camera={camera?.publication} layout={layout} />;
   }
 
   function annotationNote(person: RoomState["members"][number]) {
@@ -588,10 +592,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
 
     <div className="relative flex min-h-0 min-w-0 flex-1">
       <section className={`isolate flex min-w-0 flex-1 flex-col ${stage === "grid" ? "p-3 sm:p-5" : ""}`}>
-        {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={id} isHost={role === "host"} canDraw={canDrawBoard} coarse={coarse} members={visibleMembers} renderTile={renderParticipantTile} layer={workspaceLayer} follow={follow} host={workspaceHost} upload={materials.upload} expanded={expanded} onExpand={() => setExpandedStage(`ws:${view.id}`)} onCollapse={() => setExpandedStage(null)} onShowShare={shareActive ? () => chooseStage("share") : undefined} />
-        : stage === "share" && activeScreen && state ? <PresentationArea state={state} activeScreen={activeScreen} members={visibleMembers} expanded={expanded} onExpand={expandScreen} onCollapse={() => setExpandedStage(null)} renderTile={renderParticipantTile} renderParticipantList={renderParticipantList} layerProps={layerProps} toolbarVisible={canDraw} actions={shareActions} placeholder={mirrorGuard && activeShareId ? <MirrorPlaceholder sync={sync} shareId={activeShareId} selfId={joined.member.id} pipSupported={pipSupported} pipOpen={Boolean(pipWindow)} onPip={togglePip} onShow={() => setSelfPreviewShareId(activeShareId)} /> : undefined} /> : <div className="grid min-h-0 flex-1 auto-rows-[minmax(140px,1fr)] grid-cols-[repeat(auto-fit,minmax(min(100%,180px),1fr))] gap-2 overflow-y-auto">
-          {visibleMembers.map((person) => renderParticipantTile(person, "grid"))}
-        </div>}
+        {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={id} isHost={role === "host"} canDraw={canDrawBoard} coarse={coarse} members={tileMembers} renderTile={renderParticipantTile} layer={workspaceLayer} follow={follow} host={workspaceHost} upload={materials.upload} expanded={expanded} onExpand={() => setExpandedStage(`ws:${view.id}`)} onCollapse={() => setExpandedStage(null)} onShowShare={shareActive ? () => chooseStage("share") : undefined} />
+        : stage === "share" && activeScreen && state ? <PresentationArea state={state} activeScreen={activeScreen} members={tileMembers} expanded={expanded} onExpand={expandScreen} onCollapse={() => setExpandedStage(null)} renderTile={renderParticipantTile} renderParticipantList={renderParticipantList} layerProps={layerProps} toolbarVisible={canDraw} actions={shareActions} placeholder={mirrorGuard && activeShareId ? <MirrorPlaceholder sync={sync} shareId={activeShareId} selfId={joined.member.id} pipSupported={pipSupported} pipOpen={Boolean(pipWindow)} onPip={togglePip} onShow={() => setSelfPreviewShareId(activeShareId)} /> : undefined} /> : <TileGrid members={tileMembers} renderTile={renderParticipantTile} />}
       </section>
 
       {!expanded && panel && <aside className="z-20 flex w-[min(360px,100%)] shrink-0 flex-col border-l border-white/10 bg-[#17263e] max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:shadow-2xl short:absolute short:inset-y-0 short:right-0 short:w-[min(340px,100%)] short:shadow-2xl">

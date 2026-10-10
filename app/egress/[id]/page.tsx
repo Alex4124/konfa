@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { LiveKitRoom, RoomAudioRenderer, useRoomContext, useTracks, VideoTrack } from "@livekit/components-react";
 import { RoomEvent, Track, type RemoteParticipant } from "livekit-client";
 import { AnnotationLayer } from "@/components/annotations/annotation-layer";
+import { TileGrid } from "@/components/participant-tiles";
 import { SharedScreen } from "@/components/shared-screen";
 import { WorkspaceArea } from "@/components/workspace/workspace-area";
 import type { WorkspaceLayerProps } from "@/components/workspace/pane-chrome";
@@ -102,9 +103,7 @@ function RecordingScene({ roomId, access, connected }: { roomId: string; access:
     <div className="flex items-center justify-between"><strong className="text-xl">конфа<span className="text-[#6de7d4]">.</span></strong><span className="text-sm text-slate-400">{state?.room.kind === "webinar" ? "Вебинар" : "Встреча"}</span></div>
     {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={roomId} isHost={false} canDraw={false} coarse={false} members={[]} renderTile={noTile} layer={workspaceLayer} follow={follow} host={null} upload={null} expanded onExpand={noop} onCollapse={noop} recording /> : screen ? <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#17263e]">
       <SharedScreen trackRef={screen} resetKey={state?.room.activeShareId}>{showMarks && state?.room.activeShareId && <AnnotationLayer key={state.room.activeShareId} shareId={state.room.activeShareId} sync={sync} canDraw={false} showSavedAuthors={false} />}</SharedScreen>
-    </div> : <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 overflow-hidden">
-      {cameras.slice(0, 9).map((camera) => <div key={camera.participant.identity} className="relative overflow-hidden rounded-2xl bg-[#17263e]"><VideoTrack trackRef={camera} className="h-full w-full object-cover" /><span className="absolute bottom-3 left-3 rounded-lg bg-[#0e192c]/70 px-2 py-1 text-sm">{camera.participant.name}</span></div>)}
-    </div>}
-    {stage !== "grid" && <div className="flex h-32 gap-3 overflow-hidden">{cameras.slice(0, 7).map((camera) => <div key={camera.participant.identity} className="relative aspect-video overflow-hidden rounded-xl bg-[#17263e]"><VideoTrack trackRef={camera} className="h-full w-full object-cover" /></div>)}</div>}
+    </div> : <TileGrid members={cameras.slice(0, 9).map((camera) => ({ id: camera.participant.identity, camera }))} gap={12} renderTile={({ id, camera }, layout) => <div key={id} className={`relative overflow-hidden rounded-2xl bg-[#17263e] ${layout === "fit" ? "h-full w-full" : "aspect-video w-full"}`}><VideoTrack trackRef={camera} className="h-full w-full object-contain" /><span className="absolute bottom-3 left-3 rounded-lg bg-[#0e192c]/70 px-2 py-1 text-sm">{camera.participant.name}</span></div>} />}
+    {stage !== "grid" && <div className="flex h-32 gap-3 overflow-hidden">{cameras.slice(0, 7).map((camera) => <div key={camera.participant.identity} className="relative aspect-video overflow-hidden rounded-xl bg-[#17263e]"><VideoTrack trackRef={camera} className="h-full w-full object-contain" /></div>)}</div>}
   </main>;
 }
