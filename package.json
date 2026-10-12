@@ -16,6 +16,7 @@
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@hookform/resolvers": "^5.7.1",
+    "@js-temporal/polyfill": "^0.5.1",
     "@livekit/components-react": "^2.9.24",
     "@livekit/track-processors": "0.8.1",
     "@mediapipe/tasks-vision": "0.10.14",

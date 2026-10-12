@@ -20,6 +20,7 @@ import {
   validatePageSizes, workspaceUpdate, type DocumentRow, type Surface, type WorkspaceRow,
 } from "@/lib/workspace";
 import type { Annotation, AnnotationKind, AnnotationOp, AnnotationPayload, WorkspaceDocument } from "@/lib/confa-types";
+import { markScheduleEnded, scheduledOwner } from "@/lib/schedule-server";
 
 export const runtime = "edge";
 
@@ -179,7 +180,7 @@ async function get(request: Request): Promise<Response> {
   const path = parts(request);
   if (path[0] === "rooms" && path.length === 2) {
     const room = await roomById(path[1]);
-    return json({ id: room.id, kind: room.kind, status: room.status });
+    return json({ id: room.id, kind: room.kind, status: room.status, seriesUrl: room.schedule_id ? `${new URL(request.url).origin}/s/${room.schedule_id}` : null });
   }
   if (path[0] === "rooms" && path.length === 3 && path[2] === "state") return roomState(request, path[1]);
   if (path[0] === "rooms" && path.length === 3 && path[2] === "surfaces") return surfacesState(request, path[1]);
@@ -279,14 +280,15 @@ async function joinRoom(request: Request, id: string): Promise<Response> {
   if (room.status !== "open") throw new AppError("Комната завершена", 410);
   const input = await readJson(request);
   const name = requiredString(input.name, "имя", 60);
-  const isHost = typeof input.hostSecret === "string" && await sha256(input.hostSecret) === room.host_secret_hash;
+  const accountHost = room.schedule_id ? await scheduledOwner(request, room.schedule_id) : false;
+  const isHost = accountHost || (typeof input.hostSecret === "string" && await sha256(input.hostSecret) === room.host_secret_hash);
   if (typeof input.hostSecret === "string" && !isHost) throw new AppError("Ссылка ведущего недействительна", 403);
   let member: MemberRow | null = null;
   const previous = request.headers.get("Authorization");
   if (previous) {
     try {
       const previousMember = await authorize(request, id);
-      if (!isHost || previousMember.role === "host") member = previousMember;
+      if ((!room.schedule_id || previousMember.role !== "host" || accountHost) && (!isHost || previousMember.role === "host")) member = previousMember;
     } catch { /* New session */ }
   }
   if (!member) {
@@ -307,7 +309,8 @@ async function joinRoom(request: Request, id: string): Promise<Response> {
     sessionToken: await appToken(id, member.id),
     livekitToken: await joinToken(id, member),
     livekitUrl: mediaConfig().url,
-    guestUrl: `${origin}/r/${id}`,
+    guestUrl: room.schedule_id ? `${origin}/s/${room.schedule_id}` : `${origin}/r/${id}`,
+    seriesUrl: room.schedule_id ? `${origin}/s/${room.schedule_id}` : null,
     kind: room.kind,
   });
 }
@@ -1041,7 +1044,9 @@ async function endRoom(id: string, member: MemberRow): Promise<Response> {
       } catch (error) { console.error("Could not stop recording while ending room", error); }
     }
   }
-  await db().prepare("UPDATE rooms SET status = 'ended', ended_at = ? WHERE id = ?").bind(Date.now(), id).run();
+  const endedAt = Date.now();
+  if (room.schedule_id) await markScheduleEnded(id, room.schedule_id, endedAt);
+  else await db().prepare("UPDATE rooms SET status = 'ended', ended_at = ? WHERE id = ?").bind(endedAt, id).run();
   try { await livekitRequest("RoomService", "DeleteRoom", { room: id }, id); } catch (error) { console.error(error); }
   try { await purgeRoomFiles(id); } catch (error) { console.error("Could not purge room files", error); }
   return json({ ended: true });

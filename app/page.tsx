@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Mic, MonitorUp, Video, Users, PenLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -9,6 +10,11 @@ type RoomKind = "meeting" | "webinar";
 export default function Home() {
   const [busy, setBusy] = useState<RoomKind | null>(null);
   const [error, setError] = useState("");
+  const [accountName, setAccountName] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/account").then((response) => response.json() as Promise<{ account?: { name: string } | null }>).then((data) => setAccountName(data.account?.name || null)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     type WebMcpTool = { name: string; title: string; description: string; inputSchema: object; annotations: { readOnlyHint: boolean }; execute: (input: unknown) => Promise<unknown> };
@@ -52,7 +58,7 @@ export default function Home() {
     <main className="home-shell min-h-screen text-white">
       <header className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-7 lg:px-12">
         <div className="flex items-center gap-3" aria-label="Конфа"><span className="brand-mark"><Video size={21} strokeWidth={2.5} /></span><span className="text-xl font-bold tracking-tight">конфа<span className="text-[#6de7d4]">.</span></span></div>
-        <span className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 sm:inline-flex">Встречи и вебинары до 50 человек</span>
+        <div className="flex items-center gap-3"><span className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 lg:inline-flex">Встречи и вебинары до 50 человек</span><Link href={accountName ? "/dashboard" : "/account"} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">{accountName ? "Личный кабинет" : "Войти"}</Link></div>
       </header>
       <div className="mx-auto grid max-w-7xl gap-10 px-6 pb-16 pt-10 xl:min-h-[calc(100vh-108px)] xl:grid-cols-[minmax(0,1fr)_minmax(400px,.9fr)] xl:items-center xl:gap-16 xl:px-12 xl:pb-28 xl:pt-0">
         <section className="min-w-0 max-w-2xl">
@@ -65,6 +71,7 @@ export default function Home() {
           </div>
           {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
           <p className="mt-5 text-sm text-slate-400">Участникам не нужна регистрация</p>
+          <p className="mt-3 text-sm text-slate-400">Хотите назначить время и повторение? <Link href={accountName ? "/dashboard" : "/account"} className="font-medium text-[#9af4e7] hover:underline">Запланируйте конференцию</Link>.</p>
         </section>
         <section aria-label="Возможности комнаты" className="room-preview rounded-[28px] border border-white/10 bg-[#17263e] p-4 shadow-[0_32px_90px_rgba(3,10,27,.35)] sm:p-5">
           <div className="mb-4 flex items-center justify-between px-1 text-sm text-slate-300"><span className="flex items-center gap-2"><span className="h-2 w-2 rounded-full bg-[#6de7d4]" />Комната «Обсуждение проекта»</span><span className="flex items-center gap-1"><Users size={15} /> 4</span></div>

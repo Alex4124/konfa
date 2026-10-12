@@ -13,7 +13,7 @@ import type { RoomKind, Role } from "@/lib/confa-types";
 
 type Joined = {
   member: { id: string; name: string; role: Role; canAnnotate: boolean };
-  sessionToken: string; livekitToken: string; livekitUrl: string; guestUrl: string; kind: RoomKind;
+  sessionToken: string; livekitToken: string; livekitUrl: string; guestUrl: string; seriesUrl?: string | null; kind: RoomKind;
 };
 
 // Each camera arrives at the size of its tile (in screen pixels, so a scaled display stays sharp) and stops while nobody
@@ -25,7 +25,7 @@ export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
   const id = String(params.id || "");
-  const [room, setRoom] = useState<{ kind: RoomKind; status: string } | null>(null);
+  const [room, setRoom] = useState<{ kind: RoomKind; status: string; seriesUrl: string | null } | null>(null);
   const [name, setName] = useState("");
   const [camera, setCamera] = useState(false);
   const [microphone, setMicrophone] = useState(false);
@@ -51,8 +51,11 @@ export default function RoomPage() {
       setIsHostLink(new URLSearchParams(location.hash.slice(1)).has("host"));
     };
     const initial = window.setTimeout(loadBrowserState, 0);
+    fetch("/api/account").then((response) => response.json() as Promise<{ account?: { name: string } }>).then((data) => {
+      if (data.account?.name && !localStorage.getItem("confa-name")) setName(data.account.name);
+    }).catch(() => {});
     fetch(`/api/rooms/${id}`).then(async (response) => {
-      const data = await response.json() as { error?: string; kind: RoomKind; status: string };
+      const data = await response.json() as { error?: string; kind: RoomKind; status: string; seriesUrl: string | null };
       if (!response.ok) throw new Error(data.error || "Комната не найдена");
       setRoom(data);
     }).catch((cause) => setError(cause.message));
@@ -117,7 +120,7 @@ export default function RoomPage() {
   if (conferenceEnded) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => router.push("/")}>На главную</Button></div></main>;
 
   if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} options={ROOM_OPTIONS} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
-    <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); router.push("/"); }} onEnded={() => { setJoined(null); setConferenceEnded(true); }} connectionError={error} />
+    <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); router.push(joined.seriesUrl || "/"); }} onEnded={() => { setJoined(null); if (joined.seriesUrl) router.push(joined.seriesUrl); else setConferenceEnded(true); }} connectionError={error} />
   </LiveKitRoom>;
 
   // The room can be missing, so leaving this page must bypass client-side routing.
