@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { LiveKitRoom } from "@livekit/components-react";
 import { createLocalVideoTrack, type LocalVideoTrack, type RoomOptions } from "livekit-client";
 import { ArrowLeft, Camera, CameraOff, Mic, MicOff, Video, Users, ShieldCheck } from "lucide-react";
@@ -23,7 +23,6 @@ const ROOM_OPTIONS: RoomOptions = { adaptiveStream: { pixelDensity: "screen" }, 
 
 export default function RoomPage() {
   const params = useParams();
-  const router = useRouter();
   const id = String(params.id || "");
   const [room, setRoom] = useState<{ kind: RoomKind; status: string; seriesUrl: string | null } | null>(null);
   const [name, setName] = useState("");
@@ -117,10 +116,10 @@ export default function RoomPage() {
     finally { setBusy(false); }
   }
 
-  if (conferenceEnded) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => router.push("/")}>На главную</Button></div></main>;
+  if (conferenceEnded) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => window.location.assign("/")}>На главную</Button></div></main>;
 
   if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} options={ROOM_OPTIONS} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
-    <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); router.push(joined.seriesUrl || "/"); }} onEnded={() => { setJoined(null); if (joined.seriesUrl) router.push(joined.seriesUrl); else setConferenceEnded(true); }} connectionError={error} />
+    <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); window.location.assign(joined.seriesUrl || "/"); }} onEnded={() => { setJoined(null); if (joined.seriesUrl) window.location.assign(joined.seriesUrl); else setConferenceEnded(true); }} connectionError={error} />
   </LiveKitRoom>;
 
   // The room can be missing, so leaving this page must bypass client-side routing.

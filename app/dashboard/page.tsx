@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { CalendarDays, Copy, LogOut, Pencil, Play, Plus, Video, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { RoomKind, ScheduleView } from "@/lib/confa-types";
@@ -32,7 +30,6 @@ function localWhen(value: number): string {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
   const [account, setAccount] = useState<Account | null>(null);
   const [schedules, setSchedules] = useState<ScheduleView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,13 +44,13 @@ export default function DashboardPage() {
   const refresh = useCallback(async () => {
     const [accountResponse, schedulesResponse] = await Promise.all([fetch("/api/account"), fetch("/api/schedules")]);
     const accountData = await accountResponse.json() as { account: Account | null };
-    if (!accountData.account || schedulesResponse.status === 401) { router.replace("/account"); return; }
+    if (!accountData.account || schedulesResponse.status === 401) { window.location.replace("/account"); return; }
     if (!schedulesResponse.ok) throw new Error("Не удалось загрузить расписание");
     const scheduleData = await schedulesResponse.json() as { schedules: ScheduleView[] };
     setAccount(accountData.account);
     setSchedules(scheduleData.schedules);
     setLoading(false);
-  }, [router]);
+  }, []);
 
   useEffect(() => { void refresh().catch((cause) => { setError(cause.message); setLoading(false); }); }, [refresh]);
 
@@ -107,7 +104,7 @@ export default function DashboardPage() {
 
   async function logout() {
     setBusy("logout");
-    try { await api("/api/account", "POST", { action: "logout" }); router.push("/"); router.refresh(); }
+    try { await api("/api/account", "POST", { action: "logout" }); window.location.assign("/"); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось выйти"); setBusy(""); }
   }
 
@@ -121,7 +118,7 @@ export default function DashboardPage() {
   if (loading) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] text-slate-300">Загружаем кабинет…</main>;
   return <main className="min-h-dvh bg-[#0e192c] text-white">
     <header className="border-b border-white/10 bg-[#14243a]"><div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-4">
-      <Link href="/" className="flex items-center gap-2 text-xl font-bold"><span className="brand-mark !h-9 !w-9"><Video size={18} /></span>конфа<span className="text-[#6de7d4]">.</span></Link>
+      <a href="/" className="flex items-center gap-2 text-xl font-bold"><span className="brand-mark !h-9 !w-9"><Video size={18} /></span>конфа<span className="text-[#6de7d4]">.</span></a>
       <div className="flex items-center gap-3 text-sm"><span className="text-slate-300">{account?.name} <span className="text-slate-500">@{account?.nickname}</span></span><Button variant="ghost" size="sm" onClick={() => void logout()} disabled={busy === "logout"} className="text-slate-300 hover:text-white"><LogOut size={16} />Выйти</Button></div>
     </div></header>
     <div className="mx-auto max-w-6xl px-5 py-9 sm:py-12">
@@ -149,7 +146,7 @@ export default function DashboardPage() {
           <p className="mt-5 text-sm text-slate-200">{schedule.nextStartAt ? `Следующая: ${localWhen(schedule.nextStartAt)}` : schedule.completed ? "Разовая конференция проведена" : schedule.status === "cancelled" ? "Будущие сеансы отменены" : "Ближайшее время не найдено"}</p>
           <p className="mt-1 text-xs text-slate-400">{describeRecurrence(schedule)} · {schedule.durationMinutes} мин · {schedule.timezone}</p>
           {schedule.missedAt.length > 0 && <p className="mt-2 text-xs text-amber-200">Пропущено за 30 дней: {schedule.missedAt.length}</p>}
-          <div className="mt-5 flex flex-wrap gap-2"><Link href={`/s/${schedule.id}`} className="inline-flex h-9 items-center rounded-lg border border-white/20 px-3 text-sm hover:bg-white/10">Открыть страницу</Link><Button size="sm" variant="outline" className="border-white/20 bg-transparent text-white" onClick={() => void copy(schedule.guestUrl)}><Copy size={14} />Ссылка</Button>{schedule.status === "active" && !schedule.completed && <Button size="sm" className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]" disabled={busy === schedule.id} onClick={() => void start(schedule)}><Play size={14} />{schedule.activeRoomId ? "Войти" : "Начать сейчас"}</Button>}</div>
+          <div className="mt-5 flex flex-wrap gap-2"><a href={`/s/${schedule.id}`} className="inline-flex h-9 items-center rounded-lg border border-white/20 px-3 text-sm hover:bg-white/10">Открыть страницу</a><Button size="sm" variant="outline" className="border-white/20 bg-transparent text-white" onClick={() => void copy(schedule.guestUrl)}><Copy size={14} />Ссылка</Button>{schedule.status === "active" && !schedule.completed && <Button size="sm" className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]" disabled={busy === schedule.id} onClick={() => void start(schedule)}><Play size={14} />{schedule.activeRoomId ? "Войти" : "Начать сейчас"}</Button>}</div>
           {schedule.status === "active" && !schedule.completed && <div className="mt-4 flex gap-4 border-t border-white/10 pt-4 text-xs"><button type="button" className="inline-flex items-center gap-1 text-slate-300 hover:text-white" onClick={() => edit(schedule)}><Pencil size={13} />Изменить</button><button type="button" className="text-rose-300 hover:text-rose-200" onClick={() => void cancel(schedule)}>Отменить серию</button></div>}
         </article>)}
       </section>

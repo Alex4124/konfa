@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { ArrowLeft, Download, Video } from "lucide-react";
 
 export default function RecordingPage() {
@@ -26,7 +25,7 @@ export default function RecordingPage() {
   }, [token]);
 
   return <main className="min-h-screen bg-[#0e192c] px-5 py-8 text-white">
-    <div className="mx-auto max-w-5xl"><Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</Link>
+    <div className="mx-auto max-w-5xl"><a href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</a>
       <div className="mt-12 flex items-center gap-3"><span className="brand-mark"><Video size={20} /></span><h1 className="text-3xl font-semibold">Запись встречи</h1></div>
       <p className="mt-3 text-slate-400">Ссылка действует 30 дней после завершения записи.</p>
       {error ? <div role="alert" className="mt-8 rounded-2xl border border-rose-400/25 bg-rose-400/10 p-6 text-rose-100">{error}</div>

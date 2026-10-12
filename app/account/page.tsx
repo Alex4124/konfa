@@ -1,13 +1,10 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { ArrowLeft, CalendarDays, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function AccountPage() {
-  const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
   const [nickname, setNickname] = useState("");
@@ -18,9 +15,9 @@ export default function AccountPage() {
 
   useEffect(() => {
     fetch("/api/account").then((response) => response.json() as Promise<{ account?: unknown }>).then((data) => {
-      if (data.account) router.replace("/dashboard");
+      if (data.account) window.location.replace("/dashboard");
     }).catch(() => {});
-  }, [router]);
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -29,14 +26,13 @@ export default function AccountPage() {
       const response = await fetch("/api/account", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: mode, name, nickname, email, password }) });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error || "Не удалось войти");
-      router.push("/dashboard");
-      router.refresh();
+      window.location.assign("/dashboard");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Не удалось войти"); }
     finally { setBusy(false); }
   }
 
   return <main className="min-h-dvh bg-[#0e192c] px-5 py-7 text-white">
-    <div className="mx-auto max-w-5xl"><Link href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</Link></div>
+    <div className="mx-auto max-w-5xl"><a href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</a></div>
     <div className="mx-auto mt-12 grid max-w-5xl gap-10 lg:grid-cols-[1fr_430px] lg:items-center">
       <section className="max-w-lg">
         <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#6de7d4] text-[#10243a]"><CalendarDays size={27} /></div>
