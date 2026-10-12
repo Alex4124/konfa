@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { AnnotationKind, UiTool } from "@/lib/confa-types";
 import {
-  CHIP_GAP, CHIP_MAX_CHARS, COMPACT_AREA_WIDTH, DEFAULT_PREFS, DRAW_TOOLS, LASER_COLOR, LINE_VARIANTS, MARKER_OPACITY, PALETTE, PREFS_KEY, SHAPE_VARIANTS,
+  CHIP_GAP, CHIP_MAX_CHARS, COMPACT_AREA_WIDTH, DEFAULT_PREFS, DRAW_TOOLS, LASER_COLOR, LINE_VARIANTS, MARKER_OPACITY, OTHER_DRAW_TOOLS, PALETTE, PEN_GROUP_TOOLS, PREFS_KEY, SHAPE_VARIANTS,
   TOOL_META, WIDTH_MAX, WIDTH_MIN, chipFontPx, chipName, defaultToolFor, hotkeyFor, isCreatingTool, markAnchor, markKindOf, mergePrefs, normalizePrefs, parsePrefs,
   placeChip, resolveEscape, samePrefs, serializePrefs, toolbarLayoutFor, toolPrefsPatch, toolShortcut, toolTitle, variantGroup, widthGroup, type AnnotationPrefs,
   type HotkeyEvent,
@@ -39,11 +39,12 @@ describe("constants", () => {
     assert.equal(TOOL_META.circle.label, "Эллипс");
   });
 
-  it("lists every drawing tool once in the compact grid order", () => {
+  it("puts the five ink and line tools under the pencil and leaves the other tools separate", () => {
     assert.equal(DRAW_TOOLS.length, 13);
     assert.deepEqual([...DRAW_TOOLS].sort(), UI_TOOLS.filter((t) => t !== "laser" && t !== "view").sort());
-    assert.deepEqual(DRAW_TOOLS.slice(0, 3), ["pen", "marker", "text"]);
-    assert.deepEqual(DRAW_TOOLS.slice(9), ["hexagon", "move", "eraser", "formula"]);
+    assert.deepEqual(PEN_GROUP_TOOLS, ["pen", "marker", "arrow", "line", "dashed"]);
+    assert.deepEqual(OTHER_DRAW_TOOLS, ["text", "rect", "circle", "triangle", "hexagon", "move", "eraser", "formula"]);
+    assert.deepEqual([...PEN_GROUP_TOOLS, ...OTHER_DRAW_TOOLS].sort(), [...DRAW_TOOLS].sort());
   });
 });
 

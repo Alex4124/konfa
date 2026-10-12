@@ -1,16 +1,16 @@
 "use client";
 
 import type { ReactNode, SyntheticEvent } from "react";
-import { ArrowUpRight, Check, ChevronDown, Circle, Ellipsis, Eraser, Eye, FlaskConical, Grab, Hexagon, Highlighter, Keyboard, Minus, Pen, RectangleHorizontal, Redo2, Sparkles, Trash2, Triangle, Type, Undo2, UserRound, WandSparkles, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Circle, Ellipsis, Eraser, Eye, FlaskConical, Grab, Hexagon, Highlighter, Keyboard, Minus, Pen, RectangleHorizontal, Redo2, Shapes, Sparkles, Trash2, Triangle, Type, Undo2, UserRound, WandSparkles, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
 import { unitsToPx } from "@/lib/annotation-geometry";
-import { DRAW_TOOLS, LASER_STYLES, LINE_VARIANTS, markKindOf, MARKER_OPACITY, PALETTE, SHAPE_VARIANTS, TEXT_SIZES, TOOL_META, toolShortcut, toolTitle, variantGroup, widthGroup, WIDTH_MAX, WIDTH_MIN, type AnnotationPrefs, type PrefsPatch, type TextSize, type ToolbarLayout, type ToolIconName, type WidthGroup } from "@/lib/annotation-tools";
+import { LASER_STYLES, markKindOf, MARKER_OPACITY, OTHER_DRAW_TOOLS, PALETTE, PEN_GROUP_TOOLS, SHAPE_VARIANTS, TEXT_SIZES, TOOL_META, toolShortcut, toolTitle, variantGroup, widthGroup, WIDTH_MAX, WIDTH_MIN, type AnnotationPrefs, type PrefsPatch, type TextSize, type ToolbarLayout, type ToolIconName, type WidthGroup } from "@/lib/annotation-tools";
 import type { UiTool } from "@/lib/confa-types";
 
-export type ToolbarPicker = "laser" | "line" | "shape" | "color" | "tools" | "style" | "more";
+export type ToolbarPicker = "laser" | "draw" | "shape" | "color" | "tools" | "style" | "more";
 type Props = {
   tool: UiTool;
   prefs: AnnotationPrefs;
@@ -72,7 +72,6 @@ export function AnnotationToolbar(p: Props) {
   const group = widthGroup(styleTool);
   const units = group ? prefs.widths[group] : 0;
   const colorLabel = PALETTE.find((choice) => choice.value === color)?.label ?? color;
-  const lineTool = variantGroup(tool) === "line" ? tool : prefs.lineVariant;
   const shapeTool = variantGroup(tool) === "shape" ? tool : prefs.shapeVariant;
   const laserLabel = LASER_STYLES.find((style) => style.value === prefs.laserStyle)?.label ?? TOOL_META.laser.label;
   const showFingers = p.penOnly || prefs.fingersDraw;
@@ -91,7 +90,7 @@ export function AnnotationToolbar(p: Props) {
   };
 
   // Main button picks the remembered variant; the chevron opens the variants.
-  const split = (picker: "line" | "shape", main: UiTool, active: boolean, label: string, items: ReactNode) => <Popover key={picker} {...pickerProps(picker)}>
+  const split = (picker: "shape", main: UiTool, active: boolean, label: string, items: ReactNode) => <Popover key={picker} {...pickerProps(picker)}>
     <div className={`flex items-center ${vertical ? "flex-col" : ""}`}>
       {toolButton(main, active)}
       <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon-xs" title={label} aria-label={label} className={inactiveClass}><ChevronDown size={14} className={vertical ? "-rotate-90" : ""} /></Button></PopoverTrigger>
@@ -115,7 +114,21 @@ export function AnnotationToolbar(p: Props) {
       <PopoverContent {...contentProps} align="start" className={`w-60 ${popoverClass}`} aria-label="Вид указки">{laserItems}</PopoverContent>
     </Popover>;
 
-  const drawButton = <Button key="draw" type="button" variant="ghost" size={layout.compact ? "icon" : "sm"} title={`Рисовать: ${TOOL_META[prefs.lastDrawTool].label}`} aria-label="Рисовать" className={`${sizeClass} ${inactiveClass}`} onClick={() => choose(prefs.lastDrawTool)}><ToolIcon tool={prefs.lastDrawTool} />{!layout.compact && "Рисовать"}</Button>;
+  const penActive = PEN_GROUP_TOOLS.some((next) => next === tool);
+  // Keep the same key in both modes so arming the pencil does not unmount the open menu.
+  // Prevent Radix's trigger toggle: a repeated click should leave the menu open.
+  const drawButton = <Popover key="draw" {...pickerProps("draw")}>
+    <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon" title="Карандаш: выбрать инструмент" aria-label="Карандаш и линии" aria-pressed={penActive} aria-keyshortcuts={toolShortcut("pen")} className={`${sizeClass} ${penActive ? activeClass : inactiveClass}`} onClick={(event) => { event.preventDefault(); p.onTool("pen"); p.onOpenPicker("draw"); }}><Pen size={18} /></Button></PopoverTrigger>
+    <PopoverContent {...contentProps} align="start" className={`w-64 ${popoverClass}`} aria-label="Карандаш и линии">{PEN_GROUP_TOOLS.map((next) => menuTool(next))}</PopoverContent>
+  </Popover>;
+
+  const otherActive = OTHER_DRAW_TOOLS.some((next) => next === tool);
+  const otherButton = <Popover key="tools" {...pickerProps("tools")}>
+    <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon" title="Другие инструменты" aria-label="Другие инструменты" aria-pressed={otherActive} className={`relative ${sizeClass} ${otherActive ? activeClass : inactiveClass}`}><Shapes size={18} /><ChevronDown size={10} className="absolute bottom-0.5 right-0.5" /></Button></PopoverTrigger>
+    <PopoverContent {...contentProps} align="center" className={`w-auto ${popoverClass}`} aria-label="Другие инструменты">
+      <div className="grid grid-cols-3 gap-1">{OTHER_DRAW_TOOLS.map((next) => <Button key={next} type="button" variant="ghost" size="icon" title={toolTitle(next)} aria-label={TOOL_META[next].label} aria-pressed={tool === next} className={`size-11 ${tool === next ? activeClass : inactiveClass}`} onClick={() => choose(next)}><ToolIcon tool={next} size={20} /></Button>)}</div>
+    </PopoverContent>
+  </Popover>;
 
   const swatches = (close: boolean) => <div className="grid grid-cols-6 gap-2">{PALETTE.map((choice) => <button key={choice.value} type="button" title={choice.label} aria-label={choice.label} aria-pressed={color === choice.value} className={`size-8 rounded-full border-2 outline-none focus-visible:ring-2 focus-visible:ring-[#6de7d4] ${color === choice.value ? "border-white" : "border-white/30"}`} style={{ backgroundColor: choice.value }} onClick={() => { p.onPrefs({ color: choice.value }); if (close) p.onOpenPicker(null); }} />)}</div>;
 
@@ -151,17 +164,11 @@ export function AnnotationToolbar(p: Props) {
   </Popover>;
 
   let items: ReactNode[];
-  if (!drawMode) items = [toolButton("view"), laserButton, separator("s1"), drawButton, separator("s2"), more];
+  if (!drawMode) items = [toolButton("view"), laserButton, separator("s1"), drawButton, ...(layout.compact ? [otherButton] : []), separator("s2"), more];
   else if (layout.compact) {
-    const current = markKind || tool === "move" || tool === "eraser" ? tool : prefs.lastDrawTool;
     items = [
       toolButton("view"), laserButton, separator("s1"),
-      <Popover key="tools" {...pickerProps("tools")}>
-        <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon" title={`${toolTitle(current)}: другой инструмент`} aria-label={`Инструмент: ${TOOL_META[current].label}`} className={`relative ${sizeClass} ${activeClass}`}><ToolIcon tool={current} /><ChevronDown size={10} className="absolute bottom-0.5 right-0.5" /></Button></PopoverTrigger>
-        <PopoverContent {...contentProps} align="center" className={`w-auto ${popoverClass}`} aria-label="Инструменты">
-          <div className="grid grid-cols-3 gap-1">{DRAW_TOOLS.map((next) => <Button key={next} type="button" variant="ghost" size="icon" title={toolTitle(next)} aria-label={TOOL_META[next].label} aria-pressed={tool === next} className={`size-11 ${tool === next ? activeClass : inactiveClass}`} onClick={() => choose(next)}><ToolIcon tool={next} size={20} /></Button>)}</div>
-        </PopoverContent>
-      </Popover>,
+      drawButton, otherButton,
       <Popover key="style" {...pickerProps("style")}>
         <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon" disabled={styleDisabled} title={`Цвет и толщина: ${colorLabel}`} aria-label={`Цвет и толщина: ${colorLabel}`} className={`${sizeClass} ${inactiveClass}`}><span aria-hidden className="size-6 rounded-full border-2 border-white/80" style={{ backgroundColor: color }} /></Button></PopoverTrigger>
         <PopoverContent {...contentProps} align="center" className={`w-auto space-y-3 p-3 ${popoverClass}`} aria-label="Цвет и толщина">{swatches(false)}{widthControl(true)}</PopoverContent>
@@ -171,8 +178,7 @@ export function AnnotationToolbar(p: Props) {
   } else {
     items = [
       toolButton("view"), laserButton, separator("s1"),
-      toolButton("pen"), toolButton("marker"),
-      split("line", lineTool, variantGroup(tool) === "line", "Вид линии", LINE_VARIANTS.map((next) => menuTool(next))),
+      drawButton,
       split("shape", shapeTool, variantGroup(tool) === "shape", "Вид фигуры", SHAPE_VARIANTS.map((next) => menuTool(next))),
       toolButton("text"), toolButton("formula"), separator("s2"),
       toolButton("move"), toolButton("eraser"), separator("s3"),

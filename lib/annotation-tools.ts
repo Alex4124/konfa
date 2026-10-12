@@ -6,7 +6,7 @@ export const LASER_COLOR = "#ff3b5c";
 export const MARKER_OPACITY = 0.38;
 export const WIDTH_MIN = 1;
 export const WIDTH_MAX = 24;
-export const COMPACT_AREA_WIDTH = 880; // the full toolbar is 875 px wide
+export const COMPACT_AREA_WIDTH = 880; // leave room for the full toolbar and style controls
 export const CHIP_GAP = 10;
 export const CHIP_MAX_CHARS = 24;
 
@@ -53,8 +53,10 @@ export const TOOL_META: Readonly<Record<UiTool, ToolMeta>> = {
 
 export const LINE_VARIANTS: readonly LineVariant[] = ["line", "arrow", "dashed"];
 export const SHAPE_VARIANTS: readonly ShapeVariant[] = ["rect", "circle", "triangle", "hexagon"];
-// Compact toolbar grid (3 per row): pen marker text / line arrow dashed / rect circle triangle / hexagon move eraser / formula.
+// All tools in the drawing menus; the pencil menu has its own five-tool subset.
 export const DRAW_TOOLS: readonly Exclude<Tool, "laser">[] = ["pen", "marker", "text", "line", "arrow", "dashed", "rect", "circle", "triangle", "hexagon", "move", "eraser", "formula"];
+export const PEN_GROUP_TOOLS = ["pen", "marker", "arrow", "line", "dashed"] as const;
+export const OTHER_DRAW_TOOLS = DRAW_TOOLS.filter((tool) => !PEN_GROUP_TOOLS.some((penTool) => penTool === tool));
 export const LASER_STYLES: ReadonlyArray<{ readonly value: LaserStyle; readonly label: string }> = [
   { value: "laser", label: "Указка" },
   { value: "ink", label: "Исчезающий карандаш" },
