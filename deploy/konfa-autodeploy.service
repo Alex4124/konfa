@@ -1,0 +1,19 @@
+# Automatic deploy of Конфа: builds and switches to the newest master from GitHub (deploy/konfa-deploy.sh).
+# Install: this file and konfa-autodeploy.timer to /etc/systemd/system/, the script to /usr/local/sbin/konfa-deploy
+# (mode 750), then `systemctl daemon-reload && systemctl enable --now konfa-autodeploy.timer`.
+# A run that finds nothing new takes a second and logs nothing. What happened: `journalctl -u konfa-autodeploy`
+# and /srv/konfa/deploy/status.
+[Unit]
+Description=Konfa: deploy the newest master from GitHub
+After=network-online.target
+Wants=network-online.target
+# Whatever happens to the script, the site is started again.
+OnFailure=konfa.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/konfa-deploy
+TimeoutStartSec=40min
+# The script's lines are logged as notices; systemd's own "Starting/Finished" every two minutes are dropped.
+SyslogLevel=notice
+LogLevelMax=notice

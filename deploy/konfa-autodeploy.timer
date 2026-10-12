@@ -1,0 +1,10 @@
+# Looks at GitHub every two minutes (see konfa-autodeploy.service).
+[Unit]
+Description=Konfa: look for a new master on GitHub every two minutes
+
+[Timer]
+OnCalendar=*:0/2
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
