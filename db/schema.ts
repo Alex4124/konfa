@@ -13,7 +13,60 @@ export const rooms = sqliteTable("rooms", {
   createdAt: integer("created_at").notNull(),
   endedAt: integer("ended_at"),
   creatorHash: text("creator_hash"),
+  scheduleId: text("schedule_id").references(() => schedules.id),
 }, (table) => [index("rooms_creator_time_idx").on(table.creatorHash, table.createdAt)]);
+
+export const accounts = sqliteTable("accounts", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  nickname: text("nickname").notNull(),
+  nicknameKey: text("nickname_key").notNull(),
+  email: text("email").notNull(),
+  emailKey: text("email_key").notNull(),
+  emailVerifiedAt: integer("email_verified_at"),
+  passwordSalt: text("password_salt").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [uniqueIndex("accounts_nickname_key_idx").on(table.nicknameKey), uniqueIndex("accounts_email_key_idx").on(table.emailKey)]);
+
+export const accountSessions = sqliteTable("account_sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  accountId: text("account_id").notNull().references(() => accounts.id),
+  createdAt: integer("created_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+}, (table) => [index("account_sessions_account_idx").on(table.accountId)]);
+
+export const authAttempts = sqliteTable("auth_attempts", {
+  key: text("key").primaryKey(),
+  attempts: integer("attempts").notNull(),
+  windowStart: integer("window_start").notNull(),
+});
+
+export const schedules = sqliteTable("schedules", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => accounts.id),
+  title: text("title").notNull(),
+  kind: text("kind").notNull(),
+  startDate: text("start_date").notNull(),
+  startTime: text("start_time").notNull(),
+  durationMinutes: integer("duration_minutes").notNull(),
+  timezone: text("timezone").notNull(),
+  recurrence: text("recurrence").notNull(),
+  weekdays: integer("weekdays").notNull().default(0),
+  status: text("status").notNull().default("active"),
+  activeRoomId: text("active_room_id"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [index("schedules_owner_idx").on(table.ownerId, table.createdAt)]);
+
+export const scheduleSessions = sqliteTable("schedule_sessions", {
+  roomId: text("room_id").primaryKey().references(() => rooms.id),
+  scheduleId: text("schedule_id").notNull().references(() => schedules.id),
+  plannedStartAt: integer("planned_start_at"),
+  startedAt: integer("started_at").notNull(),
+  endedAt: integer("ended_at"),
+}, (table) => [index("schedule_sessions_schedule_idx").on(table.scheduleId, table.startedAt)]);
 
 export const members = sqliteTable("members", {
   id: text("id").primaryKey(),

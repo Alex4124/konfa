@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 import { docTokenExp } from "@/lib/workspace";
+import { AppError } from "@/lib/app-error";
+export { AppError } from "@/lib/app-error";
 
 export type RoomKind = "meeting" | "webinar";
 export type Role = "host" | "speaker" | "viewer";
@@ -8,7 +10,7 @@ export type RoomRow = {
   id: string; kind: RoomKind; host_secret_hash: string; status: string;
   active_share_id: string | null; active_share_owner: string | null;
   annotations_enabled: number;
-  recording_id: string | null; created_at: number; ended_at: number | null;
+  recording_id: string | null; created_at: number; ended_at: number | null; schedule_id: string | null;
 };
 export type MemberRow = {
   id: string; room_id: string; name: string; role: Role;
@@ -19,10 +21,6 @@ export type RecordingRow = {
   egress_id: string | null; status: string; started_at: number;
   ended_at: number | null; expires_at: number | null; last_checked_at: number | null;
 };
-
-export class AppError extends Error {
-  constructor(message: string, public status = 400, public code?: string) { super(message); }
-}
 
 export function db(): D1Database {
   if (!env.DB) throw new AppError("База данных пока не подключена", 503);

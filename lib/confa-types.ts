@@ -1,5 +1,12 @@
 export type RoomKind = "meeting" | "webinar";
 export type Role = "host" | "speaker" | "viewer";
+export type ScheduleView = {
+  id: string; title: string; kind: RoomKind; startDate: string; startTime: string;
+  durationMinutes: number; timezone: string; recurrence: "once" | "daily" | "weekly" | "weekdays";
+  weekdays: number; status: "active" | "cancelled"; completed: boolean;
+  nextStartAt: number | null; activeRoomId: string | null; isOwner: boolean;
+  guestUrl: string; lastStartedAt: number | null; missedAt: number[];
+};
 export type Point = [number, number];
 export type AnnotationKind = "pen" | "line" | "arrow" | "dashed" | "marker" | "rect" | "circle" | "triangle" | "hexagon" | "text";
 export type Tool = AnnotationKind | "eraser" | "move" | "laser" | "formula"; // laser is never stored; formula makes a text with chem

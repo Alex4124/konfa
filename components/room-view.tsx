@@ -36,7 +36,7 @@ import type { Role, RoomKind, RoomState } from "@/lib/confa-types";
 
 type Joined = {
   member: { id: string; name: string; role: Role; canAnnotate: boolean };
-  sessionToken: string; livekitToken: string; livekitUrl: string; guestUrl: string; kind: RoomKind;
+  sessionToken: string; livekitToken: string; livekitUrl: string; guestUrl: string; seriesUrl?: string | null; kind: RoomKind;
 };
 type Props = { id: string; joined: Joined; initialCamera: boolean; background: VideoBackground | null; onBackgroundChange: (background: VideoBackground | null) => void; onLeave: () => void; onEnded: () => void; connectionError: string };
 
