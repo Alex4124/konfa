@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks } from "@livekit/components-react";
 import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication, type RemoteParticipant } from "livekit-client";
-import { AudioLines, Check, ChevronUp, Copy, Ellipsis, ExternalLink, EyeOff, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, PictureInPicture2, Presentation, Radio, Smile, Users, Video, VideoOff, X } from "lucide-react";
+import { AudioLines, Check, ChevronUp, Copy, Ellipsis, ExternalLink, EyeOff, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, PictureInPicture2, Presentation, Radio, Smile, SwitchCamera, Users, Video, VideoOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,6 +18,8 @@ import { BackgroundPicker, type VideoBackground } from "@/components/background-
 import { WorkspaceArea } from "@/components/workspace/workspace-area";
 import type { WorkspaceHostActions, WorkspaceLayerProps } from "@/components/workspace/pane-chrome";
 import { createStableBackgroundProcessor, type StableBackgroundProcessor } from "@/lib/stable-background";
+import { flipLabel, oppositeFacing, supportsScreenShare, type Facing } from "@/lib/camera-facing";
+import { useCameraCount } from "@/hooks/use-camera-count";
 import { accessLevel, accessRoomFromState, canAnnotate, canModerate, isShareOwner, type AccessMember } from "@/lib/annotation-permissions";
 import { createStateRefresher, shareSnapshot, useAnnotationSync, windowTimers } from "@/hooks/use-annotation-sync";
 import { useSurfaceHub } from "@/hooks/use-surface-hub";
@@ -41,7 +43,7 @@ type Joined = {
   member: { id: string; name: string; role: Role; canAnnotate: boolean };
   sessionToken: string; livekitToken: string; livekitUrl: string; guestUrl: string; seriesUrl?: string | null; kind: RoomKind;
 };
-type Props = { id: string; joined: Joined; initialCamera: boolean; background: VideoBackground | null; onBackgroundChange: (background: VideoBackground | null) => void; onLeave: () => void; onEnded: () => void; connectionError: string };
+type Props = { id: string; joined: Joined; initialCamera: boolean; initialFacing: Facing; background: VideoBackground | null; onBackgroundChange: (background: VideoBackground | null) => void; onLeave: () => void; onEnded: () => void; connectionError: string };
 
 type FocusController = { setFocusBehavior: (behavior: "no-focus-change") => void };
 type OwnShare = { shareId: string; surface: DisplaySurface };
@@ -53,7 +55,7 @@ const moreItemClass = "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-
 const NO_MEMBERS: RoomState["members"] = [];
 const chatEmoji = ["😀", "😄", "😂", "😊", "😍", "👍", "👏", "🎉", "❤️", "🙏", "🤔", "😮", "😢", "🔥", "👋", "✅", "🙌", "😎", "🤝", "💯"];
 
-export function RoomView({ id, joined, initialCamera, background, onBackgroundChange, onLeave, onEnded, connectionError }: Props) {
+export function RoomView({ id, joined, initialCamera, initialFacing, background, onBackgroundChange, onLeave, onEnded, connectionError }: Props) {
   const room = useRoomContext();
   const participants = useParticipants();
   const cameras = useTracks([Track.Source.Camera]);
@@ -71,6 +73,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const [mic, setMic] = useState(room.localParticipant.isMicrophoneEnabled);
   const [cam, setCam] = useState(room.localParticipant.isCameraEnabled);
   const [cameraBusy, setCameraBusy] = useState(false);
+  const [facing, setFacing] = useState(initialFacing); // front or back camera, on a touch device
   const [ownShare, setOwnShare] = useState<OwnShare | null>(null); // what this member last started sharing (whole screen or not)
   const [selfPreviewShareId, setSelfPreviewShareId] = useState<string | null>(null); // a whole-screen share the presenter chose to see anyway
   const [pipNotice, setPipNotice] = useState<PipNotice | null>(null);
@@ -83,6 +86,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const appliedBackgroundUrl = useRef<string | null>(null);
   const backgroundQueue = useRef<Promise<void>>(Promise.resolve());
   const backgroundRef = useRef(background);
+  const facingRef = useRef(initialFacing);
+  const coarseRef = useRef(false);
   const previousBackground = useRef(background);
   const lastPermission = useRef<"on" | "off" | null>(null);
   useEffect(() => { backgroundRef.current = background; }, [background]);
@@ -100,9 +105,15 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const shareOwner = isShareOwner(me, access);
   const activeShareId = state?.room.activeShareId ?? null;
   const coarse = useMediaQuery("(pointer: coarse)");
+  useEffect(() => { coarseRef.current = coarse; }, [coarse]);
   useLessonTouchGuard(coarse);
   const isShort = useMediaQuery("(max-height: 520px)");
   const canPublish = role !== "viewer";
+  // A phone or a tablet with a front and a back camera gets the switch where the share button was: phone browsers
+  // cannot share a screen. A computer keeps its bar as it was.
+  const [canShareScreen] = useState(() => supportsScreenShare());
+  const cameraCount = useCameraCount(coarse && cam);
+  const canFlip = coarse && cam && cameraCount >= 2;
   const activeScreen = state?.room.activeShareId
     ? screens.find((track) => track.participant.identity === state.room.activeShareOwner)
     : undefined;
@@ -321,13 +332,15 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
         try { processor = createStableBackgroundProcessor(selected.url, setError); }
         catch (cause) { setError(cause instanceof Error ? cause.message : "Обработка фона недоступна"); }
       }
-      try { await room.localParticipant.setCameraEnabled(true, processor ? { processor } : undefined); }
+      // A touch device names the side; a computer opens its default camera as before.
+      const capture = coarseRef.current ? { facingMode: facingRef.current } : undefined;
+      try { await room.localParticipant.setCameraEnabled(true, processor ? { ...capture, processor } : capture); }
       catch (cause) {
         if (!processor) throw cause;
         await processor.destroy().catch(() => {});
         processor = null;
         setError(cause instanceof Error ? cause.message : "Обработка фона недоступна");
-        await room.localParticipant.setCameraEnabled(true);
+        await room.localParticipant.setCameraEnabled(true, capture);
       }
       cameraProcessor.current = processor;
       appliedBackgroundUrl.current = processor ? selected?.url || null : null;
@@ -366,6 +379,40 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       setCam(false);
     } catch { setError("Не удалось выключить камеру"); }
     finally { setCameraBusy(false); }
+  }
+
+  // The other side of a phone. restartTrack stops the running camera before it opens the other one (a phone cannot hold
+  // both), so a failure brings the old side back, or turns the camera off if even that fails. Queued with the background
+  // changes so the two never restart the track at once. The side then survives turning the camera off and on: LiveKit
+  // reopens it with the last constraints.
+  async function flipCamera() {
+    const track = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+    if (!(track instanceof LocalVideoTrack) || cameraBusy) return;
+    setCameraBusy(true);
+    const from = facingRef.current;
+    const to = oppositeFacing(from);
+    // Without the size restartTrack would drop the 720p of the first start.
+    const resolution = room.options.videoCaptureDefaults?.resolution;
+    const flip = backgroundQueue.current.catch(() => {}).then(async () => {
+      try {
+        await track.restartTrack({ facingMode: to, resolution });
+        facingRef.current = to;
+        setFacing(to);
+      } catch {
+        try {
+          await track.restartTrack({ facingMode: from, resolution });
+          setError("Не удалось переключить камеру");
+        } catch {
+          await room.localParticipant.setCameraEnabled(false).catch(() => {});
+          cameraProcessor.current = null;
+          appliedBackgroundUrl.current = null;
+          setCam(false);
+          setError("Камера отключилась: не удалось переключить камеру");
+        }
+      }
+    });
+    backgroundQueue.current = flip;
+    try { await flip; } finally { setCameraBusy(false); }
   }
 
   const stopShare = useCallback(async () => {
@@ -641,12 +688,13 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
             <PopoverContent side="top" align="start" collisionPadding={8} className="w-72 border-white/15 bg-[#1c2c45] p-1.5 text-white">{noiseItem}</PopoverContent>
           </Popover>
           <Button variant="secondary" size="icon-lg" title={cam ? "Выключить камеру" : "Включить камеру"} aria-label={cam ? "Выключить камеру" : "Включить камеру"} disabled={cameraBusy} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => void toggleCam()}>{cam ? <Video /> : <VideoOff />}</Button>
+          {canFlip && <Button variant="secondary" size="icon-lg" title={flipLabel(facing)} aria-label={flipLabel(facing)} disabled={cameraBusy} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => void flipCamera()}><SwitchCamera /></Button>}
           <div className="max-sm:hidden short:hidden"><BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} compact /></div>
-          <Button variant="secondary" size="icon-lg" title={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} aria-label={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} disabled={busy === "share" || busy === "shareRequest" || (role !== "host" && myShareRequest?.status === "active" && !isSharing)} className={`rounded-full text-white hover:bg-[#3e5673] ${railSize} ${isSharing || myShareRequest?.status === "approved" ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => {
+          {canShareScreen && <Button variant="secondary" size="icon-lg" title={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} aria-label={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} disabled={busy === "share" || busy === "shareRequest" || (role !== "host" && myShareRequest?.status === "active" && !isSharing)} className={`rounded-full text-white hover:bg-[#3e5673] ${railSize} ${isSharing || myShareRequest?.status === "approved" ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => {
             if (isSharing || role === "host" || myShareRequest?.status === "approved") void toggleShare();
             else if (myShareRequest?.status === "pending") void action("share-requests", { action: "cancel", requestId: myShareRequest.id }, "shareRequest");
             else void action("share-requests", { action: "request" }, "shareRequest");
-          }}>{isSharing ? <MonitorX /> : <MonitorUp />}</Button>
+          }}>{isSharing ? <MonitorX /> : <MonitorUp />}</Button>}
           {shareStatus && <span className="max-w-28 shrink-0 text-xs text-slate-200 max-sm:hidden short:hidden">{shareStatus}</span>}
         </>}
         <Button variant="secondary" size="icon-lg" title="Поднять или опустить руку" aria-label="Поднять или опустить руку" className={`rounded-full text-white hover:bg-[#3e5673] ${railSize} ${self?.raised_hand ? "bg-amber-500/40" : "bg-[#2d415d]"}`} onClick={() => void action("hand", {})}><Hand /></Button>

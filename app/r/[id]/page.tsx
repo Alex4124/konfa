@@ -4,12 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { LiveKitRoom } from "@livekit/components-react";
 import { createLocalVideoTrack, type LocalVideoTrack, type RoomOptions } from "livekit-client";
-import { ArrowLeft, Camera, CameraOff, Mic, MicOff, Video, Users, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Camera, CameraOff, Mic, MicOff, SwitchCamera, Video, Users, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { RoomView } from "@/components/room-view";
 import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
 import { createStableBackgroundProcessor } from "@/lib/stable-background";
+import { DEFAULT_FACING, flipLabel, oppositeFacing, type Facing } from "@/lib/camera-facing";
+import { useCameraCount } from "@/hooks/use-camera-count";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNoiseFilterPref, useNoiseFilterSupported } from "@/hooks/use-noise-filter-pref";
 import type { RoomKind, Role } from "@/lib/confa-types";
 
@@ -40,6 +43,14 @@ export default function RoomPage() {
   const [background, setBackground] = useState<VideoBackground | null>(null);
   const backgroundUrls = useRef<string[]>([]);
   const previewRef = useRef<HTMLVideoElement>(null);
+  // Front or back camera on a phone or a tablet; the room opens the same side.
+  const [facing, setFacing] = useState<Facing>(DEFAULT_FACING);
+  // A camera has opened on this page, so the device lists all its cameras.
+  const [cameraAllowed, setCameraAllowed] = useState(false);
+  const previewChain = useRef<Promise<void>>(Promise.resolve());
+  const coarse = useMediaQuery("(pointer: coarse)");
+  const cameraCount = useCameraCount(coarse && cameraAllowed);
+  const canFlip = coarse && camera && cameraCount >= 2;
 
   useEffect(() => () => { backgroundUrls.current.forEach((url) => URL.revokeObjectURL(url)); }, []);
 
@@ -71,35 +82,43 @@ export default function RoomPage() {
     let stream: MediaStream | null = null;
     let previewTrack: LocalVideoTrack | null = null;
     const preview = previewRef.current;
+    // A touch device names the side; a computer opens its default camera as before.
+    const side = coarse ? { facingMode: facing } : undefined;
     const start = async () => {
+      if (cancelled) return;
       try {
         if (background) {
           try {
-            previewTrack = await createLocalVideoTrack({ processor: createStableBackgroundProcessor(background.url, (message) => setError(message)) });
+            previewTrack = await createLocalVideoTrack({ ...side, processor: createStableBackgroundProcessor(background.url, (message) => setError(message)) });
             if (cancelled) { previewTrack.stop(); return; }
             previewTrack.attach(preview);
+            setCameraAllowed(true);
             return;
           } catch (cause) {
             if (!cancelled) setError(cause instanceof Error ? cause.message : "Обработка фона недоступна");
           }
         }
         {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          stream = await navigator.mediaDevices.getUserMedia({ video: side ?? true, audio: false });
           if (cancelled) { stream.getTracks().forEach((track) => track.stop()); return; }
           preview.srcObject = stream;
+          setCameraAllowed(true);
         }
       } catch (cause) {
         if (!cancelled) { setCamera(false); setError(cause instanceof Error ? cause.message : "Нет доступа к камере"); }
       }
     };
-    void start();
+    // A phone cannot open its other camera while one is running: each preview starts after the previous one has opened
+    // and released its camera.
+    previewChain.current = previewChain.current.then(start);
     return () => {
       cancelled = true;
-      if (previewTrack) { previewTrack.detach(); void previewTrack.stopProcessor().finally(() => previewTrack?.stop()); }
+      // stop() releases the camera at once and destroys the background processor itself.
+      if (previewTrack) { previewTrack.detach(); previewTrack.stop(); }
       stream?.getTracks().forEach((track) => track.stop());
       preview.srcObject = null;
     };
-  }, [camera, background, joined]);
+  }, [camera, background, joined, coarse, facing]);
 
   async function join() {
     if (!name.trim()) { setError("Введите имя"); return; }
@@ -123,7 +142,7 @@ export default function RoomPage() {
   if (conferenceEnded) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => window.location.assign("/")}>На главную</Button></div></main>;
 
   if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} options={ROOM_OPTIONS} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
-    <RoomView id={id} joined={joined} initialCamera={camera} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); window.location.assign(joined.seriesUrl || "/"); }} onEnded={() => { setJoined(null); if (joined.seriesUrl) window.location.assign(joined.seriesUrl); else setConferenceEnded(true); }} connectionError={error} />
+    <RoomView id={id} joined={joined} initialCamera={camera} initialFacing={facing} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); window.location.assign(joined.seriesUrl || "/"); }} onEnded={() => { setJoined(null); if (joined.seriesUrl) window.location.assign(joined.seriesUrl); else setConferenceEnded(true); }} connectionError={error} />
   </LiveKitRoom>;
 
   // The room can be missing, so leaving this page must bypass client-side routing.
@@ -138,6 +157,7 @@ export default function RoomPage() {
         <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-3">
           <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={microphone ? "Выключить микрофон" : "Включить микрофон"} onClick={() => setMicrophone(!microphone)}>{microphone ? <Mic /> : <MicOff />}</Button>
           <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={camera ? "Выключить камеру" : "Включить камеру"} onClick={() => setCamera(!camera)}>{camera ? <Camera /> : <CameraOff />}</Button>
+          {canFlip && <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={flipLabel(facing)} aria-label={flipLabel(facing)} onClick={() => setFacing(oppositeFacing(facing))}><SwitchCamera /></Button>}
         </div>
       </div>
       <div>
