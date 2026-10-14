@@ -6,9 +6,11 @@ import { LiveKitRoom } from "@livekit/components-react";
 import { createLocalVideoTrack, type LocalVideoTrack, type RoomOptions } from "livekit-client";
 import { ArrowLeft, Camera, CameraOff, Mic, MicOff, Video, Users, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { RoomView } from "@/components/room-view";
 import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
 import { createStableBackgroundProcessor } from "@/lib/stable-background";
+import { useNoiseFilterPref, useNoiseFilterSupported } from "@/hooks/use-noise-filter-pref";
 import type { RoomKind, Role } from "@/lib/confa-types";
 
 type Joined = {
@@ -28,6 +30,8 @@ export default function RoomPage() {
   const [name, setName] = useState("");
   const [camera, setCamera] = useState(false);
   const [microphone, setMicrophone] = useState(false);
+  const [noiseFilter, setNoiseFilter] = useNoiseFilterPref();
+  const noiseSupported = useNoiseFilterSupported();
   const [joined, setJoined] = useState<Joined | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -144,6 +148,7 @@ export default function RoomPage() {
         <label className="mt-8 block text-sm font-medium text-slate-200" htmlFor="display-name">Ваше имя</label>
         <input id="display-name" autoComplete="name" maxLength={60} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void join(); }} placeholder="Как к вам обращаться" className="mt-2 h-13 w-full max-w-md rounded-xl border border-[#435872] bg-[#1b2c46] px-4 text-base text-white outline-none placeholder:text-slate-400 focus:border-[#6de7d4]" />
         <div className="mt-5"><BackgroundPicker background={background} onChange={changeBackground} onError={setError} /></div>
+        <label className="mt-4 flex w-fit max-w-md items-center gap-3 text-sm text-slate-200"><Switch checked={noiseFilter && noiseSupported} disabled={!noiseSupported} onCheckedChange={setNoiseFilter} className="data-[state=checked]:bg-[#6de7d4] data-[state=unchecked]:bg-[#314763] [&_[data-slot=switch-thumb]]:!bg-white" /><span>Шумоподавление<span className="block text-xs text-slate-400">{noiseSupported ? "Убирает фоновый шум: клавиатуру, вентилятор, улицу" : "Недоступно в этом браузере"}</span></span></label>
         <div className="mt-6"><Button className="h-13 rounded-xl bg-[#6de7d4] px-7 text-base font-semibold text-[#10243a] hover:bg-[#96f5e7]" disabled={busy || !room || room.status !== "open"} onClick={() => void join()}>{busy ? "Подключаем…" : "Войти"}</Button></div>
         {error && <p role="alert" className="mt-4 max-w-md text-sm text-rose-300">{error}</p>}
         {room?.status === "ended" && <p className="mt-4 text-rose-300">Эта комната уже завершена</p>}

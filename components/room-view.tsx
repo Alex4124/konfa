@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { RoomAudioRenderer, useParticipants, useRoomContext, useTracks } from "@livekit/components-react";
 import { ConnectionState, LocalVideoTrack, RoomEvent, Track, type LocalTrackPublication, type RemoteParticipant } from "livekit-client";
-import { Copy, Ellipsis, ExternalLink, EyeOff, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, PictureInPicture2, Presentation, Radio, Smile, Users, Video, VideoOff, X } from "lucide-react";
+import { AudioLines, Check, ChevronUp, Copy, Ellipsis, ExternalLink, EyeOff, Hand, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, PictureInPicture2, Presentation, Radio, Smile, Users, Video, VideoOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -32,6 +32,8 @@ import { useVisualViewportReset } from "@/hooks/use-visual-viewport-reset";
 import { useLessonTouchGuard } from "@/hooks/use-lesson-touch-guard";
 import { useDocumentPip, useDocumentPipSupported } from "@/hooks/use-document-pip";
 import { usePresenterAlerts } from "@/hooks/use-presenter-alerts";
+import { useNoiseFilter } from "@/hooks/use-noise-filter";
+import { useNoiseFilterPref, useNoiseFilterSupported } from "@/hooks/use-noise-filter-pref";
 import { pipFallbackSize, readAspectRatio, readDisplaySurface, type DisplaySurface } from "@/lib/presenter-pip";
 import type { Role, RoomKind, RoomState } from "@/lib/confa-types";
 
@@ -85,6 +87,8 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const lastPermission = useRef<"on" | "off" | null>(null);
   useEffect(() => { backgroundRef.current = background; }, [background]);
   useVisualViewportReset();
+  const [noiseWanted, setNoiseWanted] = useNoiseFilterPref();
+  const noise = useNoiseFilter(room, noiseWanted, useNoiseFilterSupported());
   const activeIds = useMemo(() => new Set(participants.map((person) => person.identity)), [participants]);
   const self = state?.members.find((item) => item.id === joined.member.id);
   const role = self?.role || joined.member.role;
@@ -558,6 +562,11 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       {pipSupported && <Button variant="secondary" size="icon-lg" title="Окно пометок поверх экрана" aria-label="Окно пометок поверх экрана" aria-pressed={Boolean(pipWindow)} className={`${clusterButton} ${pipWindow ? "!bg-[#317b75]" : ""}`} onClick={togglePip}><PictureInPicture2 /></Button>}
     </>}
   </>;
+  // The microphone's noise suppression: under the chevron by the microphone, in «Ещё» on phones. After a failure a click tries again.
+  const noiseNote = noise.status === "unsupported" ? "Недоступно в этом браузере" : noise.status === "failed" ? "Не удалось включить — нажмите, чтобы повторить" : "";
+  const noiseItem = <button type="button" role="switch" aria-checked={noise.status === "on"} disabled={noise.status === "unsupported"} className={moreItemClass} onClick={() => { if (noise.status === "failed") noise.retry(); else setNoiseWanted(noise.status !== "on"); }}>
+    <AudioLines size={16} className="shrink-0" /><span className="min-w-0 flex-1">Шумоподавление{noiseNote && <span className="block text-xs text-slate-400">{noiseNote}</span>}</span>{noise.status === "on" && <Check size={16} className="shrink-0 text-[#6de7d4]" />}
+  </button>;
   const workspaceLabel = !view ? "Создать доску" : view.open ? "Закрыть доску" : "Открыть доску";
   const workspaceLayer: WorkspaceLayerProps = { hub, selfId: joined.member.id, canDraw: canDrawBoard, canModerate: role === "host", armedByDefault: role === "host", coarse };
   const workspaceHost: WorkspaceHostActions | null = role === "host" ? {
@@ -627,6 +636,10 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
       <div className="flex min-w-0 flex-1 items-center justify-start gap-1 overflow-x-auto sm:justify-center sm:gap-2 short:min-h-0 short:w-full short:flex-col short:justify-start short:gap-1 short:overflow-x-hidden short:overflow-y-auto">
         {canPublish && <>
           <Button variant="secondary" size="icon-lg" title={mic ? "Выключить микрофон" : "Включить микрофон"} aria-label={mic ? "Выключить микрофон" : "Включить микрофон"} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => void toggleMic()}>{mic ? <Mic /> : <MicOff />}</Button>
+          <Popover>
+            <PopoverTrigger asChild><Button variant="secondary" size="icon-xs" title="Настройки микрофона" aria-label="Настройки микрофона" className="relative z-10 -ml-4 self-end rounded-full bg-[#2d415d] text-white ring-2 ring-[#15243a] hover:bg-[#3e5673] max-sm:hidden short:hidden"><ChevronUp /></Button></PopoverTrigger>
+            <PopoverContent side="top" align="start" collisionPadding={8} className="w-72 border-white/15 bg-[#1c2c45] p-1.5 text-white">{noiseItem}</PopoverContent>
+          </Popover>
           <Button variant="secondary" size="icon-lg" title={cam ? "Выключить камеру" : "Включить камеру"} aria-label={cam ? "Выключить камеру" : "Включить камеру"} disabled={cameraBusy} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => void toggleCam()}>{cam ? <Video /> : <VideoOff />}</Button>
           <div className="max-sm:hidden short:hidden"><BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} compact /></div>
           <Button variant="secondary" size="icon-lg" title={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} aria-label={isSharing ? "Остановить демонстрацию" : role === "host" || myShareRequest?.status === "approved" ? "Показать экран" : myShareRequest?.status === "pending" ? "Отменить запрос на показ" : myShareRequest?.status === "active" ? "Подключаем показ" : "Запросить показ экрана"} disabled={busy === "share" || busy === "shareRequest" || (role !== "host" && myShareRequest?.status === "active" && !isSharing)} className={`rounded-full text-white hover:bg-[#3e5673] ${railSize} ${isSharing || myShareRequest?.status === "approved" ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => {
@@ -645,6 +658,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
           <PopoverTrigger asChild><Button variant="secondary" size="icon-lg" title="Ещё" aria-label="Ещё" className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize} ${moreInPortrait ? "sm:hidden" : "hidden"} short:inline-flex`}><Ellipsis /></Button></PopoverTrigger>
           <PopoverContent side={isShort ? "left" : "top"} align="end" collisionPadding={8} className="w-64 border-white/15 bg-[#1c2c45] p-1.5 text-white">
             {canPublish && <div className="px-1.5 py-1"><BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} /></div>}
+            {canPublish && <div className="sm:hidden short:block">{noiseItem}</div>}
             {shareStatus && <p className="px-3 py-1.5 text-xs text-slate-300">{shareStatus}</p>}
             {role === "host" && <button type="button" className={`${moreItemClass} sm:hidden short:flex`} onClick={() => { setMoreOpen(false); toggleWorkspace(); }}><Presentation size={16} />{workspaceLabel}</button>}
             {role === "host" && <button type="button" disabled={busy === "recording" || recordingStatus === "processing"} className={moreItemClass} onClick={() => { setMoreOpen(false); toggleRecording(); }}><Radio size={16} />{recordingStatus === "recording" ? "Остановить запись" : recordingStatus === "processing" ? "Готовим запись" : "Начать запись"}</button>}
