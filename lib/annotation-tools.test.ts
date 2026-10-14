@@ -4,7 +4,7 @@ import type { AnnotationKind, UiTool } from "@/lib/confa-types";
 import {
   CHIP_GAP, CHIP_MAX_CHARS, COMPACT_AREA_WIDTH, DEFAULT_PREFS, DRAW_TOOLS, LASER_COLOR, LINE_VARIANTS, MARKER_OPACITY, OTHER_DRAW_TOOLS, PALETTE, PEN_GROUP_TOOLS, PREFS_KEY, SHAPE_VARIANTS,
   TOOL_META, WIDTH_MAX, WIDTH_MIN, chipFontPx, chipName, defaultToolFor, hotkeyFor, isCreatingTool, markAnchor, markKindOf, mergePrefs, normalizePrefs, parsePrefs,
-  placeChip, resolveEscape, samePrefs, serializePrefs, toolbarLayoutFor, toolPrefsPatch, toolShortcut, toolTitle, variantGroup, widthGroup, type AnnotationPrefs,
+  penOnlyOf, placeChip, resolveEscape, samePrefs, serializePrefs, toolbarLayoutFor, toolPrefsPatch, toolShortcut, toolTitle, variantGroup, widthGroup, type AnnotationPrefs,
   type HotkeyEvent,
 } from "./annotation-tools.ts";
 
@@ -110,7 +110,7 @@ describe("prefs", () => {
   it("defaults", () => {
     assert.deepEqual(DEFAULT_PREFS, {
       lastDrawTool: "pen", lineVariant: "arrow", shapeVariant: "rect", laserStyle: "laser", color: "#6de7d4", paperColor: "#000000",
-      widths: { pen: 4, marker: 16, shape: 4 }, textSize: "m", showAuthors: false, hotkeys: true, fingersDraw: false,
+      widths: { pen: 4, marker: 16, shape: 4 }, textSize: "m", showAuthors: false, hotkeys: true, fingersDraw: false, stylus: false,
     });
     assert.ok(Object.isFrozen(DEFAULT_PREFS) && Object.isFrozen(DEFAULT_PREFS.widths));
   });
@@ -136,7 +136,7 @@ describe("prefs", () => {
   it("rejects wrong types, unknown colours and non-creating lastDrawTool", () => {
     const prefs = parsePrefs(JSON.stringify({
       lastDrawTool: "eraser", lineVariant: "rect", shapeVariant: "arrow", laserStyle: "beam", color: "#123456", textSize: "xl",
-      showAuthors: "yes", hotkeys: 0, fingersDraw: null,
+      showAuthors: "yes", hotkeys: 0, fingersDraw: null, stylus: "pen",
     }));
     assert.deepEqual(prefs, DEFAULT_PREFS);
     assert.equal(parsePrefs(JSON.stringify({ lastDrawTool: "laser" })).lastDrawTool, "pen");
@@ -155,7 +155,7 @@ describe("prefs", () => {
   });
 
   it("serializes only known keys and round-trips", () => {
-    const prefs: AnnotationPrefs = { ...DEFAULT_PREFS, laserStyle: "ink", textSize: "l", hotkeys: false, fingersDraw: true, widths: { pen: 7, marker: 18, shape: 2 } };
+    const prefs: AnnotationPrefs = { ...DEFAULT_PREFS, laserStyle: "ink", textSize: "l", hotkeys: false, fingersDraw: true, stylus: true, widths: { pen: 7, marker: 18, shape: 2 } };
     const raw = serializePrefs({ ...prefs, junk: "x" } as AnnotationPrefs);
     assert.ok(!raw.includes("junk"));
     assert.deepEqual(parsePrefs(raw), prefs);
@@ -175,8 +175,15 @@ describe("prefs", () => {
     assert.equal(samePrefs(DEFAULT_PREFS, parsePrefs(null)), true);
     assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { widths: { shape: 5 } })), false);
     assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { fingersDraw: true })), false);
+    assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { stylus: true })), false);
     assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { lineVariant: "line" })), false);
     assert.equal(samePrefs(DEFAULT_PREFS, mergePrefs(DEFAULT_PREFS, { paperColor: "#2563eb" })), false);
+  });
+
+  it("fingers stop drawing once a stylus was used here, unless «Пальцы тоже рисуют» is on", () => {
+    const rows: [boolean, boolean, boolean][] = [[false, false, false], [false, true, false], [true, false, true], [true, true, false]];
+    for (const [stylus, fingersDraw, expected] of rows) assert.equal(penOnlyOf({ ...DEFAULT_PREFS, stylus, fingersDraw }), expected, JSON.stringify({ stylus, fingersDraw }));
+    assert.equal(penOnlyOf(parsePrefs(JSON.stringify({ stylus: true }))), true, "remembered across lessons");
   });
 
   it("the ink for white paper is a palette colour of its own, black by default", () => {

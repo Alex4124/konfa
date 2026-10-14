@@ -66,7 +66,6 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const [area, setArea] = useState<Size>(EMPTY);
   const [columnWidth, setColumnWidth] = useState(0);
   const [stage, setStage] = useState(NO_STAGE);
-  const [penOnly, setPenOnly] = useState(false);
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
   const [editing, setEditing] = useState<{ part: WorkspacePart; color: string; size: TextSize } | null>(null); // the open text editor, if any
   const [clearing, setClearing] = useState<Clearing | null>(null);
@@ -101,9 +100,6 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     toolKey,
     color: prefs.paperColor,
     interaction: canDraw && tool !== "view" ? "draw" : "view",
-    fingersDraw: prefs.fingersDraw,
-    penOnly,
-    onPenOnlyChange: setPenOnly,
     seams: canDraw && BAND_TOOLS.has(tool),
   };
   // The ring shows which part the toolbar acts on, when there are two to choose from.
@@ -241,12 +237,9 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
       </div>
       {toolbarVisible && <div className={column ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 pb-1"}>
         <AnnotationToolbar tool={tool} prefs={paperPrefs} layout={toolbarLayout} coarse={coarse} canModerate={layer.canModerate} markCount={1} clearLabel={active === "board" ? "Очистить всю доску" : "Стереть пометки на странице"}
-          canUndo={history.canUndo} canRedo={history.canRedo} penOnly={penOnly} boxHeight={Math.max(240, paneWidth * 9 / 16)} editingText={Boolean(shownEditing)} textStyle={shownEditing ? { color: shownEditing.color, size: shownEditing.size } : null}
+          canUndo={history.canUndo} canRedo={history.canRedo} boxHeight={Math.max(240, paneWidth * 9 / 16)} editingText={Boolean(shownEditing)} textStyle={shownEditing ? { color: shownEditing.color, size: shownEditing.size } : null}
           openPicker={openPicker} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={requestClear}
-          onFingersDraw={(enabled) => {
-            updatePrefs({ fingersDraw: enabled });
-            if (enabled) setPenOnly(false);
-          }} />
+          onFingersDraw={(enabled) => updatePrefs({ fingersDraw: enabled })} />
       </div>}
     </div>
 

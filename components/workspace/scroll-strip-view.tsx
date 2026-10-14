@@ -36,9 +36,6 @@ type Props = {
   extent?: (bottom: number) => number; // the board: how far down it reaches, given the lowest row shown (strip widths)
   seamless?: boolean; // the board: a stroke passes from tile to tile
   interaction: FrameInteraction;
-  fingersDraw: boolean;
-  penOnly: boolean;
-  onPenOnlyChange: (value: boolean) => void;
   zoomLabel: string;
   api?: Ref<StripApi>;
   onIntent?: () => void; // the teacher moved or pressed the strip on purpose (not a resize): this device leads from now on
@@ -108,7 +105,7 @@ function createTiles(seamless: boolean) {
 
 // A column of tiles the teacher scrolls and students are held to (lib/scroll-strip): one ZoomFrame for all of them, only the
 // tiles near the viewport mounted. It owns the tiles' layer handles, so the workspace can drive whichever are on screen.
-export function ScrollStripView({ layout, pixelWidth, resetKey, fitAspect, host, start, target, extent, seamless = false, interaction, fingersDraw, penOnly, onPenOnlyChange, zoomLabel, api, onIntent, onView, onTile, background, tile, placeholder, scrollLabel }: Props) {
+export function ScrollStripView({ layout, pixelWidth, resetKey, fitAspect, host, start, target, extent, seamless = false, interaction, zoomLabel, api, onIntent, onView, onTile, background, tile, placeholder, scrollLabel }: Props) {
   const [size, setSize] = useState<Size>(EMPTY);
   const [mounted, setMounted] = useState<readonly number[]>([]);
   const [reach, setReach] = useState({ key: resetKey, tile: -1 }); // the lowest tile the teacher's view has shown: the board only grows while open
@@ -293,7 +290,7 @@ export function ScrollStripView({ layout, pixelWidth, resetKey, fitAspect, host,
   };
 
   return <div ref={areaRef} className="relative h-full w-full" onPointerDownCapture={host ? () => intend(true) : undefined} onWheelCapture={host ? () => intend() : undefined}>
-    <ZoomFrame frame={{ width: pixelWidth, height: pixelWidth * Math.max(layout.total, 1e-6) }} fit="width" boxWidth={boxWidth} band={band} locked={!host} glide={!host} zoomable frameless interaction={interaction} fingersDraw={fingersDraw} penOnly={penOnly} onPenOnlyChange={onPenOnlyChange} resetKey={resetKey} zoomLabel={zoomLabel} controller={controller} controlsClassName="bottom-2 right-5" media={background?.({ width: boxWidth, rows })}>
+    <ZoomFrame frame={{ width: pixelWidth, height: pixelWidth * Math.max(layout.total, 1e-6) }} fit="width" boxWidth={boxWidth} band={band} locked={!host} glide={!host} zoomable frameless interaction={interaction} resetKey={resetKey} zoomLabel={zoomLabel} controller={controller} controlsClassName="bottom-2 right-5" media={background?.({ width: boxWidth, rows })}>
       {placeholder && layout.tops.map((top, index) => mounted.includes(index) ? null : <FrameTile key={`blank-${index}`} top={top} aspect={1 / layout.heights[index]}>{placeholder(index)}</FrameTile>)}
       {mounted.map((index) => layout.tops[index] === undefined ? null : <FrameTile key={index} top={layout.tops[index]} aspect={1 / layout.heights[index]}>{tile(index, tiles.slot(index))}</FrameTile>)}
     </ZoomFrame>

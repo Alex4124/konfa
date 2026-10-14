@@ -17,7 +17,6 @@ type Props = {
   frameless?: boolean;
   zoomable?: boolean;
   interaction?: FrameInteraction;
-  fingersDraw?: boolean; // «Пальцы тоже рисуют»: a pen contact does not switch fingers to pan and zoom
   resetKey?: string | null;
   onFrameChange?: (aspect: number) => void;
   hideVideo?: boolean;
@@ -35,7 +34,7 @@ function provisionalFrame(publication: TrackRef["publication"]): Frame | null {
 }
 
 // The shared screen in a ZoomFrame: the frame takes the video's own size once the video reports it.
-export function SharedScreen({ trackRef, children, className = "", frameless = false, zoomable = false, interaction = "view", fingersDraw = false, resetKey = null, onFrameChange, hideVideo = false }: Props) {
+export function SharedScreen({ trackRef, children, className = "", frameless = false, zoomable = false, interaction = "view", resetKey = null, onFrameChange, hideVideo = false }: Props) {
   const publication = trackRef.publication;
   const sid = publication.trackSid;
   const [frame, setFrame] = useState<Frame | null>(null);
@@ -103,7 +102,7 @@ export function SharedScreen({ trackRef, children, className = "", frameless = f
     };
   }, [publication]);
 
-  return <ZoomFrame frame={frame} className={className} frameless={frameless} zoomable={zoomable} interaction={interaction} fingersDraw={fingersDraw} resetKey={resetKey}
+  return <ZoomFrame frame={frame} className={className} frameless={frameless} zoomable={zoomable} interaction={interaction} resetKey={resetKey}
     media={<VideoTrack ref={videoRef} trackRef={trackRef} className={`absolute inset-0 h-full w-full ${frame?.source === "video" ? "object-fill" : "object-contain"} ${hideVideo ? "opacity-0" : ""}`} />}>
     {children}
   </ZoomFrame>;

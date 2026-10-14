@@ -50,7 +50,7 @@ export function BoardPane({ view, layer, drawing, follow, highlight, orientation
   return <PaneShell part="board" title="Доска" controls={controls} highlight={highlight} onActivate={onActivate}>
     <ScrollStripView api={strip} layout={BOARD_LAYOUT} pixelWidth={BOARD_PIXEL_WIDTH} resetKey={view.id} fitAspect={null} host={Boolean(host)} start={view.boardPos} target={target} onIntent={() => follow.touch("board")} onView={(seen, settled) => follow.report("board", key, seen, settled)}
       extent={(bottom) => boardExtent({ bands, bottom, bandHeight: BAND_ROWS, max: MAX_BOARD_BANDS })} seamless
-      interaction={drawing.interaction} fingersDraw={drawing.fingersDraw} penOnly={drawing.penOnly} onPenOnlyChange={drawing.onPenOnlyChange} zoomLabel="Масштаб доски" background={paper}
+      interaction={drawing.interaction} zoomLabel="Масштаб доски" background={paper}
       tile={(index, slot) => <>
         {/* Lines, shapes, text and moved marks stay inside a band: the seam shows while such a tool is armed. */}
         {drawing.seams && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 border-b border-dashed border-slate-400/60" />}

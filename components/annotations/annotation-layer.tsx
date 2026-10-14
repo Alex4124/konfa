@@ -19,7 +19,7 @@ import { abortGesture, gestureInput, gestureStep, initialGesture, isTentativeRes
 import { DRAFT_SEND_MS, randomId, type DraftItem } from "@/lib/annotation-drafts";
 import { laserLife, pushLaserPoints } from "@/lib/annotation-laser";
 import { defaultMaxWidth, fitMaxWidth, nearestTextSize, normalizeText, placeTextAnchor, TEXT_LINE_HEIGHT, TEXT_PAD_Y, textFits, textLines, textMetrics } from "@/lib/annotation-text";
-import { defaultToolFor, isCreatingTool, LASER_COLOR, markAnchor, markKindOf, resolveEscape, widthGroup, type HotkeyAction, type PrefsPatch, type TextSize, type ToolbarLayout } from "@/lib/annotation-tools";
+import { defaultToolFor, isCreatingTool, LASER_COLOR, markAnchor, markKindOf, penOnlyOf, resolveEscape, widthGroup, type HotkeyAction, type PrefsPatch, type TextSize, type ToolbarLayout } from "@/lib/annotation-tools";
 import { formulaMetrics } from "@/lib/chem-formula";
 import { edgeExit, type EdgeExit } from "@/lib/scroll-strip";
 import type { AnnotationStore, BoardItem } from "@/lib/annotation-sync";
@@ -497,9 +497,9 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     const svg = event.currentTarget;
     const kind = pointerKind(event.pointerType);
     if (!frame.zoomable) {
-      // Without the zoom arbiter the layer rejects the palm itself: after a pen touch, fingers stop drawing.
-      if (kind === "touch" && frame.penOnly) return false;
-      if (kind === "pen" && !frame.penOnly && !prefs.fingersDraw) frame.setPenOnly(true);
+      // Without the zoom arbiter the layer rejects the palm itself: once a pen has drawn on this device, fingers stop drawing.
+      if (kind === "touch" && penOnlyOf(prefs)) return false;
+      if (kind === "pen" && !prefs.stylus) updatePrefs({ stylus: true });
     }
     if (editing) {
       // A press outside the editor saves it (and keeps focus in it, should it stay open); its click opens nothing.
@@ -809,7 +809,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     const pointerType = pointerTypeOf(event);
     if (!drawing || !textTool || editing || !actions) return;
     // A palm next to the stylus never opens an editor.
-    if (pointerType === "touch" && (frame.penOnly || now() - gestureRef.current.lastPenAt < PALM_GUARD_MS)) return;
+    if (pointerType === "touch" && (penOnlyOf(prefs) || now() - gestureRef.current.lastPenAt < PALM_GUARD_MS)) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const point = normFromClient(event.clientX, event.clientY, rect);
     const target = pickText(point, rect, pointerType);
@@ -955,10 +955,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
       </>}
     </svg>
     {editorMounted && <TextEditor editorRef={editorRef} state={editing} box={size} coarse={coarse} scale={scale} onChange={(text) => { if (editing) setEditing({ ...editing, text }); }} onCommit={() => { commitText(); }} onCancel={cancelText} />}
-    {permitted && toolbar?.container && createPortal(<AnnotationToolbar tool={tool} prefs={prefs} layout={toolbar.layout} coarse={coarse} canModerate={canModerate} markCount={items.length} canUndo={history.canUndo && synced} canRedo={history.canRedo && synced} penOnly={frame.penOnly} boxHeight={size.height} editingText={Boolean(editing)} textStyle={editing ? { color: editing.color, size: nearestTextSize(editing.fontSize) } : null} openPicker={openPicker} portalContainer={portalContainer} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={() => setClearOpen(true)} onFingersDraw={(enabled) => {
-      updatePrefs({ fingersDraw: enabled });
-      if (enabled) frame.setPenOnly(false);
-    }} />, toolbar.container)}
+    {permitted && toolbar?.container && createPortal(<AnnotationToolbar tool={tool} prefs={prefs} layout={toolbar.layout} coarse={coarse} canModerate={canModerate} markCount={items.length} canUndo={history.canUndo && synced} canRedo={history.canRedo && synced} boxHeight={size.height} editingText={Boolean(editing)} textStyle={editing ? { color: editing.color, size: nearestTextSize(editing.fontSize) } : null} openPicker={openPicker} portalContainer={portalContainer} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={() => setClearOpen(true)} onFingersDraw={(enabled) => updatePrefs({ fingersDraw: enabled })} />, toolbar.container)}
     {clearAllowed && <ClearAllDialog open={clearOpen} count={items.length} container={portalContainer} onOpenChange={setClearOpen} onConfirm={() => void actions?.clear()} />}
   </>;
 }
