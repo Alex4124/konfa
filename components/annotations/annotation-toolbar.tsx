@@ -21,7 +21,6 @@ type Props = {
   clearLabel?: string; // instead of «Очистить все пометки (N)» (the workspace: the whole board, a material's page)
   canUndo: boolean;
   canRedo: boolean;
-  penOnly: boolean;
   boxHeight: number; // frame height, for the width preview dot
   editingText: boolean;
   textStyle?: { color: string; size: TextSize } | null; // the open text editor's look: the style controls show and change it
@@ -74,7 +73,7 @@ export function AnnotationToolbar(p: Props) {
   const colorLabel = PALETTE.find((choice) => choice.value === color)?.label ?? color;
   const shapeTool = variantGroup(tool) === "shape" ? tool : prefs.shapeVariant;
   const laserLabel = LASER_STYLES.find((style) => style.value === prefs.laserStyle)?.label ?? TOOL_META.laser.label;
-  const showFingers = p.penOnly || prefs.fingersDraw;
+  const showFingers = prefs.stylus || prefs.fingersDraw; // only a device that has drawn with a pen tells fingers from the pen
 
   const pickerProps = (picker: ToolbarPicker) => ({ open: p.openPicker === picker, onOpenChange: (open: boolean) => p.onOpenPicker(open ? picker : null) });
   // The text editor keeps focus while popovers open and close.

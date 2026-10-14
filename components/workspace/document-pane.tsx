@@ -145,7 +145,7 @@ export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, 
       if (file) host.uploadFile(file);
     }} />}
     {doc && pages ? <ScrollStripView api={strip} layout={layout} pixelWidth={widest} resetKey={doc.id} fitAspect={firstAspect >= 1 ? firstAspect : null} host={Boolean(host)} start={doc.pos} target={target} onIntent={() => follow.touch("doc")} onView={(seen, settled) => follow.report("doc", key, seen, settled)}
-      interaction={drawing.interaction} fingersDraw={drawing.fingersDraw} penOnly={drawing.penOnly} onPenOnlyChange={drawing.onPenOnlyChange} zoomLabel="Масштаб материала"
+      interaction={drawing.interaction} zoomLabel="Масштаб материала"
       onTile={(index) => setReading({ doc: doc.id, page: Math.max(0, index) })} scrollLabel={(position) => `Стр. ${Math.min(doc.pageCount, Math.floor(position) + 1)}`}
       placeholder={(index) => <BlankPage page={index} />}
       tile={(index, slot) => <>

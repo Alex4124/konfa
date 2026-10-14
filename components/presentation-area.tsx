@@ -176,7 +176,7 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
 
     <div ref={columnRef} className={`relative flex min-h-0 min-w-0 flex-1 ${placement === "column" ? "flex-row" : "flex-col"}`}>
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black">
-        {placeholder ?? <SharedScreen trackRef={activeScreen} frameless zoomable interaction={interaction} fingersDraw={prefs.fingersDraw} resetKey={shareId} onFrameChange={setFrameAspect}>
+        {placeholder ?? <SharedScreen trackRef={activeScreen} frameless zoomable interaction={interaction} resetKey={shareId} onFrameChange={setFrameAspect}>
           {shareId && <AnnotationLayer key={shareId} {...layerProps} shareId={shareId} toolbar={{ container: toolbarContainer, layout: toolbarLayout }} onToolChange={toolChanged} />}
         </SharedScreen>}
         {!expanded && !placeholder && <span className="pointer-events-none absolute left-3 top-3 max-w-[50%] truncate rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white short:hidden">{activeScreen.participant.name || "Демонстрация экрана"}</span>}

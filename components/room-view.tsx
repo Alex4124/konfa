@@ -29,6 +29,7 @@ import { orderMembers } from "@/lib/tile-grid";
 import { resetArmedTool } from "@/hooks/use-annotation-prefs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useVisualViewportReset } from "@/hooks/use-visual-viewport-reset";
+import { useLessonTouchGuard } from "@/hooks/use-lesson-touch-guard";
 import { useDocumentPip, useDocumentPipSupported } from "@/hooks/use-document-pip";
 import { usePresenterAlerts } from "@/hooks/use-presenter-alerts";
 import { pipFallbackSize, readAspectRatio, readDisplaySurface, type DisplaySurface } from "@/lib/presenter-pip";
@@ -95,6 +96,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const shareOwner = isShareOwner(me, access);
   const activeShareId = state?.room.activeShareId ?? null;
   const coarse = useMediaQuery("(pointer: coarse)");
+  useLessonTouchGuard(coarse);
   const isShort = useMediaQuery("(max-height: 520px)");
   const canPublish = role !== "viewer";
   const activeScreen = state?.room.activeShareId

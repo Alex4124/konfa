@@ -120,7 +120,8 @@ export type AnnotationPrefs = Readonly<{
   textSize: TextSize;
   showAuthors: boolean;
   hotkeys: boolean;
-  fingersDraw: boolean; // sticky "Пальцы тоже рисуют": a pen-down never switches the frame to penOnly
+  fingersDraw: boolean; // sticky "Пальцы тоже рисуют": fingers draw even on a device with a stylus
+  stylus: boolean; // a pen has drawn on this device: from then on fingers (and the palm) pan instead of drawing, every lesson
 }>;
 export type PrefsPatch = Partial<Omit<AnnotationPrefs, "widths">> & { widths?: Partial<Record<WidthGroup, number>> };
 
@@ -136,6 +137,7 @@ export const DEFAULT_PREFS: AnnotationPrefs = Object.freeze({
   showAuthors: false,
   hotkeys: true,
   fingersDraw: false,
+  stylus: false,
 });
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -165,6 +167,7 @@ export function normalizePrefs(value: unknown, fallback: AnnotationPrefs = DEFAU
     showAuthors: bool(input.showAuthors, fallback.showAuthors),
     hotkeys: bool(input.hotkeys, fallback.hotkeys),
     fingersDraw: bool(input.fingersDraw, fallback.fingersDraw),
+    stylus: bool(input.stylus, fallback.stylus),
   };
 }
 
@@ -189,7 +192,12 @@ export function mergePrefs(prev: AnnotationPrefs, patch: PrefsPatch): Annotation
 export function samePrefs(a: AnnotationPrefs, b: AnnotationPrefs): boolean {
   return a === b || (a.lastDrawTool === b.lastDrawTool && a.lineVariant === b.lineVariant && a.shapeVariant === b.shapeVariant && a.laserStyle === b.laserStyle
     && a.color === b.color && a.paperColor === b.paperColor && a.widths.pen === b.widths.pen && a.widths.marker === b.widths.marker && a.widths.shape === b.widths.shape
-    && a.textSize === b.textSize && a.showAuthors === b.showAuthors && a.hotkeys === b.hotkeys && a.fingersDraw === b.fingersDraw);
+    && a.textSize === b.textSize && a.showAuthors === b.showAuthors && a.hotkeys === b.hotkeys && a.fingersDraw === b.fingersDraw && a.stylus === b.stylus);
+}
+
+// Fingers pan and zoom instead of drawing (the palm next to the pen draws nothing): a stylus was used here, «Пальцы тоже рисуют» is off.
+export function penOnlyOf(prefs: AnnotationPrefs): boolean {
+  return prefs.stylus && !prefs.fingersDraw;
 }
 
 // What selecting `tool` remembers: creating tools become lastDrawTool, line/shape tools also become the group's variant.

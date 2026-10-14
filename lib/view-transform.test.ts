@@ -407,12 +407,18 @@ describe("isTap / isDoubleTap", () => {
 });
 
 describe("routePointerDown", () => {
-  const base: RouteInput = { pointerType: "mouse", button: 0, interaction: "draw", penOnly: false, penDown: false, otherTouches: 0, zoomed: false };
+  const base: RouteInput = { pointerType: "mouse", button: 0, interaction: "draw", penOnly: false, penDown: false, penRecent: false, palmDown: false, otherTouches: 0, zoomed: false };
   const route = (over: Partial<RouteInput>) => routePointerDown({ ...base, ...over });
 
   it("follows the plan table row by row", () => {
     const rows: [string, Partial<RouteInput>, PointerRoute, boolean][] = [
       ["touch while the pen is down (palm)", { pointerType: "touch", penDown: true }, "block", false],
+      ["touch right after the pen lifted or while it hovers (palm)", { pointerType: "touch", penRecent: true }, "block", false],
+      ["the same with «Пальцы тоже рисуют»", { pointerType: "touch", penRecent: true, penOnly: false }, "block", false],
+      ["touch right after the pen in view mode scrolls", { pointerType: "touch", penRecent: true, interaction: "view" }, "gesture", false],
+      ["touch next to a palm that is still down", { pointerType: "touch", palmDown: true, otherTouches: 1 }, "block", false],
+      ["touch next to a palm in view mode", { pointerType: "touch", palmDown: true, otherTouches: 1, interaction: "view" }, "block", false],
+      ["pen right after the pen", { pointerType: "pen", penRecent: true, palmDown: true }, "pass", true],
       ["second finger in draw mode", { pointerType: "touch", otherTouches: 1 }, "gesture", false],
       ["second finger reported by isPrimary", { pointerType: "touch", primary: false }, "gesture", false],
       ["finger in draw mode after a pen was used", { pointerType: "touch", penOnly: true }, "gesture", true],
@@ -433,7 +439,7 @@ describe("routePointerDown", () => {
     const expected = (i: RouteInput): { route: PointerRoute; penOnly: boolean } => {
       const draw = i.interaction === "draw";
       if (i.pointerType === "touch") {
-        if (i.penDown) return { route: "block", penOnly: i.penOnly };
+        if (i.penDown || i.palmDown || (draw && i.penRecent)) return { route: "block", penOnly: i.penOnly };
         if (i.otherTouches >= 1 || i.primary === false) return { route: "gesture", penOnly: i.penOnly };
         if (draw && i.penOnly) return { route: "gesture", penOnly: true };
         return { route: draw ? "pass" : "gesture", penOnly: i.penOnly };
@@ -443,19 +449,21 @@ describe("routePointerDown", () => {
     };
     let count = 0;
     for (const pointerType of ["touch", "pen", "mouse", "", "unknown"]) for (const button of [0, 1, 2, 5]) for (const interaction of ["draw", "view"] as Interaction[])
-      for (const penOnly of [false, true]) for (const penDown of [false, true]) for (const otherTouches of [0, 1, 2]) for (const zoomed of [false, true])
-        for (const primary of [undefined, true, false]) {
-          const input: RouteInput = { pointerType, button, interaction, penOnly, penDown, otherTouches, zoomed, primary };
+      for (const penOnly of [false, true]) for (const penDown of [false, true]) for (const penRecent of [false, true]) for (const palmDown of [false, true])
+        for (const otherTouches of [0, 1, 2]) for (const zoomed of [false, true]) for (const primary of [undefined, true, false]) {
+          const input: RouteInput = { pointerType, button, interaction, penOnly, penDown, penRecent, palmDown, otherTouches, zoomed, primary };
           assert.deepEqual(routePointerDown(input), expected(input), JSON.stringify(input));
           count++;
         }
-    assert.equal(count, 5 * 4 * 2 * 2 * 2 * 3 * 2 * 3);
+    assert.equal(count, 5 * 4 * 2 * 2 * 2 * 2 * 2 * 3 * 2 * 3);
   });
 
   it("two fingers never draw and a palm is never routed to the layer", () => {
     for (const interaction of ["draw", "view"] as Interaction[]) for (const penOnly of [false, true]) for (const zoomed of [false, true]) {
       assert.notEqual(route({ pointerType: "touch", otherTouches: 1, interaction, penOnly, zoomed }).route, "pass");
       assert.equal(route({ pointerType: "touch", penDown: true, otherTouches: 1, interaction, penOnly, zoomed }).route, "block");
+      assert.equal(route({ pointerType: "touch", palmDown: true, otherTouches: 1, interaction, penOnly, zoomed }).route, "block");
+      assert.notEqual(route({ pointerType: "touch", penRecent: true, interaction, penOnly, zoomed }).route, "pass");
     }
   });
 

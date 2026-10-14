@@ -22,11 +22,13 @@ export type RouteInput = Readonly<{
   interaction: Interaction;
   penOnly: boolean;
   penDown: boolean; // a pen pointer is currently down on the viewport
+  penRecent: boolean; // the pen touched, lifted or hovered over the viewport a moment ago (PALM_GUARD_MS)
+  palmDown: boolean; // a touch already swallowed as a palm is still down
   otherTouches: number; // touch pointers already down, not counting this one
   zoomed: boolean;
   primary?: boolean; // PointerEvent.isPrimary; false for a touch means another finger is down
 }>;
-// penOnly is the next value of the session flag (a pen contact in draw mode turns it on).
+// penOnly is the next value of the flag (a pen contact in draw mode turns it on; the frame remembers the device has a stylus).
 export type RouteDecision = Readonly<{ route: PointerRoute; penOnly: boolean }>;
 export type StripSize = Readonly<{ top: number; left: number }>;
 export type StripPlacement = "top" | "left";
@@ -255,12 +257,13 @@ export function isDoubleTap(prev: Tap | null | undefined, next: Tap, limits: Tap
 
 // Capture-phase pointerdown arbiter on a zoomable viewport. gesture: SharedScreen pans/zooms (onGestureStart listeners,
 // then setPointerCapture; the pointerdown still bubbles, its later events are stopped; a touch gesture also takes over a
-// touch stroke in progress); pass: the annotation layer gets the event; block: swallowed (a palm while the pen is down).
+// touch stroke in progress); pass: the annotation layer gets the event; block: swallowed (a palm next to the pen: while it
+// is down, while another palm still rests, and when drawing, right after the pen lifted or while it hovers).
 export function routePointerDown(input: RouteInput): RouteDecision {
   const draw = input.interaction === "draw";
   const decide = (route: PointerRoute, penOnly = input.penOnly): RouteDecision => ({ route, penOnly });
   if (input.pointerType === "touch") {
-    if (input.penDown) return decide("block");
+    if (input.penDown || input.palmDown || (draw && input.penRecent)) return decide("block");
     if (input.otherTouches > 0 || input.primary === false) return decide("gesture");
     return decide(draw && !input.penOnly ? "pass" : "gesture");
   }

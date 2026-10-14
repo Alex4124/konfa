@@ -3,7 +3,10 @@
 import { createContext, useCallback, useContext, useImperativeHandle, useLayoutEffect, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { updateAnnotationPrefs, useAnnotationPrefs } from "@/hooks/use-annotation-prefs";
+import { PALM_GUARD_MS } from "@/lib/annotation-gesture";
 import { fitBox, type Size } from "@/lib/annotation-geometry";
+import { penOnlyOf } from "@/lib/annotation-tools";
 import { clampToBand, clampTransform, DEFAULT_MAX_ZOOM, ensureMinScale, IDENTITY_VIEW, isDoubleTap, isPannable, isTap, isZoomed, maxScaleFor, panBy, pinch, routePointerDown, toggleStripZoom, toggleZoom, TOP_VIEW, toTransform, wheelPan, wheelZoomFactor, ZOOM_STEP, zoomAt, zoomOutAt, zoomPercent, type Band, type PinchStart, type PointerRoute, type Tap, type View, type XY } from "@/lib/view-transform";
 import type { Point } from "@/lib/confa-types";
 
@@ -15,8 +18,6 @@ export type FrameInfo = {
   scale: number;
   zoomable: boolean;
   interaction: FrameInteraction;
-  penOnly: boolean;
-  setPenOnly(value: boolean): void;
   onGestureStart(listener: () => void): () => void;
   ensureScale(minScale: number, focus: Point): void;
   overlay: HTMLElement | null;
@@ -39,8 +40,6 @@ type Props = {
   locked?: boolean; // strip only: no scrolling by wheel, drag or fling (a follower), zoom stays
   glide?: boolean; // a view change that comes from the props (the teacher scrolled) eases in instead of jumping
   controller?: Ref<FrameController>;
-  penOnly?: boolean; // controlled: several frames behind one toolbar share the flag
-  onPenOnlyChange?: (value: boolean) => void;
   controlsClassName?: string; // where the zoom buttons sit
   media?: ReactNode; // drawn in the frame under the children (the video, a page image, the board)
   children?: ReactNode;
@@ -49,12 +48,12 @@ type Props = {
   frameless?: boolean;
   zoomable?: boolean;
   interaction?: FrameInteraction;
-  fingersDraw?: boolean; // «Пальцы тоже рисуют»: a pen contact does not switch fingers to pan and zoom
   resetKey?: string | null;
   zoomLabel?: string;
 };
 // What the gesture handlers read at event time (written after every render). band: in frame px at scale 1.
-type Geometry = { view: View; box: Size; viewport: Size; max: number; interaction: FrameInteraction; penOnly: boolean; fingersDraw: boolean; strip: boolean; band: Band | null; locked: boolean };
+// penOnly, stylus, fingersDraw: the device's annotation prefs (lib/annotation-tools penOnlyOf), the same in every frame.
+type Geometry = { view: View; box: Size; viewport: Size; max: number; interaction: FrameInteraction; penOnly: boolean; stylus: boolean; fingersDraw: boolean; strip: boolean; band: Band | null; locked: boolean };
 type Zoomer = { current(): View; apply(change: (view: View, geometry: Geometry) => View, animate?: boolean): void; preview(change: (view: View, geometry: Geometry) => View): void };
 type Tracked = { type: string; route: PointerRoute; at: XY; down: Tap };
 type GestureStart = { kind: "pan"; id: number; view: View; from: XY } | { kind: "pinch"; ids: [number, number]; start: PinchStart };
@@ -97,26 +96,21 @@ function ZoomControls({ label, percent, zoomed, canZoomIn, className, onZoom, on
 // A frame of known aspect with zoom and pan (Ctrl+wheel, pinch, buttons) and the gesture arbiter that decides per pointer
 // whether it pans or reaches the annotation layer in `children`. Fitted whole into its box (the share), or a scrolling strip
 // as wide as its box whose tiles are <FrameTile>s (the board, a material).
-export function ZoomFrame({ frame, media, children, className = "", frameClassName = "bg-black", frameless = false, zoomable = false, interaction = "view", fingersDraw = false, resetKey = null, zoomLabel = "Масштаб демонстрации", fit = "contain", boxWidth, band = null, locked = false, glide = false, controller, penOnly: penOnlyProp, onPenOnlyChange, controlsClassName = "bottom-2 right-2" }: Props) {
+export function ZoomFrame({ frame, media, children, className = "", frameClassName = "bg-black", frameless = false, zoomable = false, interaction = "view", resetKey = null, zoomLabel = "Масштаб демонстрации", fit = "contain", boxWidth, band = null, locked = false, glide = false, controller, controlsClassName = "bottom-2 right-2" }: Props) {
   const strip = fit === "width";
   const home = strip ? TOP_VIEW : IDENTITY_VIEW;
+  const [prefs] = useAnnotationPrefs();
   const [viewport, setViewport] = useState<Size>(EMPTY);
   const [overlay, setOverlay] = useState<HTMLDivElement | null>(null);
-  const [ownPenOnly, setOwnPenOnly] = useState(false);
   const [storedView, setStoredView] = useState<View>(home);
   const [viewKey, setViewKey] = useState(resetKey);
   const [gestureListeners] = useState(() => new Set<() => void>());
   const [viewListeners] = useState(() => new Set<() => void>());
   const viewportRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
-  const geometry = useRef<Geometry>({ view: home, box: EMPTY, viewport: EMPTY, max: DEFAULT_MAX_ZOOM, interaction, penOnly: false, fingersDraw, strip, band: null, locked });
+  const geometry = useRef<Geometry>({ view: home, box: EMPTY, viewport: EMPTY, max: DEFAULT_MAX_ZOOM, interaction, penOnly: false, stylus: false, fingersDraw: false, strip, band: null, locked });
   const zoomer = useRef<Zoomer | null>(null);
-  const penOnly = penOnlyProp ?? ownPenOnly;
-  const penOnlyChanged = useRef(onPenOnlyChange);
-  const setPenOnly = useCallback((value: boolean) => {
-    setOwnPenOnly(value);
-    penOnlyChanged.current?.(value);
-  }, []);
+  const penOnly = penOnlyOf(prefs), stylus = prefs.stylus, fingersDraw = prefs.fingersDraw;
 
   if (viewKey !== resetKey) {
     setViewKey(resetKey);
@@ -139,8 +133,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
   const pannable = strip ? isPannable(view, box, viewport, max, bandPx) : zoomed;
 
   useLayoutEffect(() => {
-    geometry.current = { view, box, viewport, max, interaction, penOnly, fingersDraw, strip, band: bandPx, locked };
-    penOnlyChanged.current = onPenOnlyChange;
+    geometry.current = { view, box, viewport, max, interaction, penOnly, stylus, fingersDraw, strip, band: bandPx, locked };
   });
 
   // The transform is never in the JSX: gestures write it straight to the element between commits.
@@ -179,6 +172,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     let multi = false; // the touch gesture had two pointers at some point: its pointerups are not taps
     let lastTap: Tap | null = null;
     let touchAt = -Infinity;
+    let penAt = -Infinity; // the pen's last down, move (hover too), up or cancel over the viewport
     let raf = 0, settle = 0, unanimate = 0, flingFrame = 0;
     let speed: { x: number; y: number; t: number } | null = null; // of a one-finger pan, px/ms (for the fling)
 
@@ -325,17 +319,23 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       const g = geo();
       const type = event.pointerType || "mouse";
       if (type !== "mouse") touchAt = now();
-      let otherTouches = 0, penDown = false;
+      const penRecent = now() - penAt < PALM_GUARD_MS;
+      if (type === "pen") penAt = now();
+      let otherTouches = 0, penDown = false, palmDown = false;
       for (const pointer of pointers.values()) {
-        if (pointer.type === "touch") otherTouches++;
-        else if (pointer.type === "pen") penDown = true;
+        if (pointer.type === "touch") {
+          otherTouches++;
+          // A primary touch means no other finger is down: a palm whose pointerup was lost no longer counts.
+          if (pointer.route === "block" && !event.isPrimary) palmDown = true;
+        } else if (pointer.type === "pen") penDown = true;
       }
       // A strip scrolls at any zoom, so there a mouse drag in «Просмотр» pans whenever there is somewhere to go.
       const zoomed = g.strip ? isPannable(current(), g.box, g.viewport, g.max, g.band) : isZoomed(current());
-      const decision = routePointerDown({ pointerType: type, button: event.button, interaction: g.interaction, penOnly: g.penOnly, penDown, otherTouches, zoomed, primary: event.isPrimary });
-      if (decision.penOnly && !g.penOnly && !g.fingersDraw) {
-        geometry.current = { ...g, penOnly: true };
-        setPenOnly(true);
+      const decision = routePointerDown({ pointerType: type, button: event.button, interaction: g.interaction, penOnly: g.penOnly, penDown, penRecent, palmDown, otherTouches, zoomed, primary: event.isPrimary });
+      if (decision.penOnly && !g.stylus) {
+        // The first pen on this device: from now on, every lesson, fingers (and the palm) pan instead of drawing.
+        geometry.current = { ...g, stylus: true, penOnly: !g.fingersDraw };
+        updateAnnotationPrefs({ stylus: true });
       }
       const at = local(event);
       const tracked: Tracked = { type, route: decision.route, at, down: { t: now(), x: at.x, y: at.y } };
@@ -368,6 +368,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     };
 
     const onMove = (event: PointerEvent) => {
+      if (event.pointerType === "pen") penAt = now(); // a hovering pen is about to write: the palm lands first
       const pointer = pointers.get(event.pointerId);
       if (!pointer) return;
       if (pointer.route === "pass") {
@@ -429,8 +430,14 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       }
       commit();
     };
-    const onUp = (event: PointerEvent) => end(event, true);
-    const onCancel = (event: PointerEvent) => end(event, false);
+    const onUp = (event: PointerEvent) => {
+      if (event.pointerType === "pen") penAt = now();
+      end(event, true);
+    };
+    const onCancel = (event: PointerEvent) => {
+      if (event.pointerType === "pen") penAt = now();
+      end(event, false);
+    };
     // Capture taken away without a pointerup (the element left the page): end the gesture where it is.
     const onLostCapture = (event: PointerEvent) => {
       if (event.target === element) end(event, false);
@@ -538,7 +545,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
       element.style.cursor = "";
       zoomer.current = null;
     };
-  }, [zoomable, resetKey, gestureListeners, viewListeners, setPenOnly]);
+  }, [zoomable, resetKey, gestureListeners, viewListeners]);
 
   const onGestureStart = useCallback((listener: () => void) => {
     gestureListeners.add(listener);
@@ -569,7 +576,7 @@ export function ZoomFrame({ frame, media, children, className = "", frameClassNa
     };
   }, [viewListeners]);
 
-  const info = useMemo<FrameInfo>(() => ({ box, aspect, ready, scale, zoomable, interaction, penOnly, setPenOnly, onGestureStart, ensureScale, overlay }), [box, aspect, ready, scale, zoomable, interaction, penOnly, setPenOnly, onGestureStart, ensureScale, overlay]);
+  const info = useMemo<FrameInfo>(() => ({ box, aspect, ready, scale, zoomable, interaction, onGestureStart, ensureScale, overlay }), [box, aspect, ready, scale, zoomable, interaction, onGestureStart, ensureScale, overlay]);
 
   // A strip's frame element has no height of its own (its tiles are placed by `top` and overflow it), so the browser never
   // has to composite one layer hundreds of screens tall.

@@ -23,7 +23,7 @@ export type WorkspaceHostActions = {
   cancelUpload(): void;
 };
 // What a part needs to draw: the tool key and ink both parts share, the frame interaction, and the pen-only flag (one for both).
-export type PaneDrawing = { toolKey: string; color: string; interaction: FrameInteraction; fingersDraw: boolean; penOnly: boolean; onPenOnlyChange(value: boolean): void; seams: boolean };
+export type PaneDrawing = { toolKey: string; color: string; interaction: FrameInteraction; seams: boolean };
 // What the workspace asks of a part: its strip, and (the material) the page a "clear" would act on.
 export type PaneApi = { strip: StripApi | null; current?: () => number };
 export type PaneEditing = (part: WorkspacePart, style: { color: string; size: TextSize } | null) => void;
