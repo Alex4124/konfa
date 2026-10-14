@@ -554,7 +554,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
   const shareStatus = role !== "host" && ["pending", "approved", "denied"].includes(myShareRequest?.status || "") ? myShareRequest?.status === "pending" ? "Ждём ведущего" : myShareRequest?.status === "approved" ? "Показ разрешён" : "Ведущий отклонил" : null;
   // «Ещё» gathers what the footer hides on narrow phones; in landscape (header hidden) also the guest link and «Закончить конференцию».
   const moreInPortrait = canPublish || Boolean(state?.recording?.url); // hosts publish too
-  const layerProps: PresentationLayerProps = { sync, selfId: joined.member.id, canDraw, canModerate: canModerateShare, armedByDefault: role === "host" || shareOwner, coarse };
+  const layerProps: PresentationLayerProps = { sync, selfId: joined.member.id, canDraw, canModerate: canModerateShare, armedByDefault: role === "host" || shareOwner, coarse, sharingScreen: isSharing };
   const shareActions = <>
     {workspaceOpen && <Button variant="secondary" size="icon-lg" title="Показать доску и материалы" aria-label="Показать доску и материалы" className={clusterButton} onClick={() => chooseStage("workspace")}><Presentation /></Button>}
     {shareOwner && <>
@@ -568,7 +568,7 @@ export function RoomView({ id, joined, initialCamera, background, onBackgroundCh
     <AudioLines size={16} className="shrink-0" /><span className="min-w-0 flex-1">Шумоподавление{noiseNote && <span className="block text-xs text-slate-400">{noiseNote}</span>}</span>{noise.status === "on" && <Check size={16} className="shrink-0 text-[#6de7d4]" />}
   </button>;
   const workspaceLabel = !view ? "Создать доску" : view.open ? "Закрыть доску" : "Открыть доску";
-  const workspaceLayer: WorkspaceLayerProps = { hub, selfId: joined.member.id, canDraw: canDrawBoard, canModerate: role === "host", armedByDefault: role === "host", coarse };
+  const workspaceLayer: WorkspaceLayerProps = { hub, selfId: joined.member.id, canDraw: canDrawBoard, canModerate: role === "host", armedByDefault: role === "host", coarse, sharingScreen: isSharing };
   const workspaceHost: WorkspaceHostActions | null = role === "host" ? {
     // The server tells everyone to drop the board's marks; the teacher's own go at once.
     clearBoard: () => {

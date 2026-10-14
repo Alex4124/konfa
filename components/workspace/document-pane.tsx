@@ -150,7 +150,7 @@ export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, 
       placeholder={(index) => <BlankPage page={index} />}
       tile={(index, slot) => <>
         <PageImage roomId={roomId} doc={doc} page={index} />
-        <SurfaceLayer hub={layer.hub} id={docSurface(doc.id, index)} slot={slot} selfId={layer.selfId} canDraw={layer.canDraw} canModerate={layer.canModerate} armedByDefault={layer.armedByDefault} coarse={layer.coarse} toolKey={drawing.toolKey} color={drawing.color} label={`Пометки на странице ${index + 1}`} onEditing={(style) => onEditing("doc", style)} />
+        <SurfaceLayer hub={layer.hub} id={docSurface(doc.id, index)} slot={slot} selfId={layer.selfId} canDraw={layer.canDraw} canModerate={layer.canModerate} armedByDefault={layer.armedByDefault} coarse={layer.coarse} sharingScreen={layer.sharingScreen} toolKey={drawing.toolKey} color={drawing.color} label={`Пометки на странице ${index + 1}`} onEditing={(style) => onEditing("doc", style)} />
       </>} /> : host && <div className="flex h-full flex-col items-center justify-center gap-3 overflow-y-auto p-6 text-center">
       <span className="grid size-12 shrink-0 place-items-center rounded-full bg-[#6de7d4]/15 text-[#9af4e7]"><Upload size={22} /></span>
       <p className="text-sm font-medium">Перетащите сюда PDF, PowerPoint, Word или картинку</p>
