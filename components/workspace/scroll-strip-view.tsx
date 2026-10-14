@@ -314,6 +314,7 @@ type LayerProps = {
   canModerate: boolean;
   armedByDefault: boolean;
   coarse: boolean;
+  sharingScreen: boolean;
   toolKey: string;
   color: string;
   label: string;
@@ -321,7 +322,7 @@ type LayerProps = {
 };
 
 // The annotation layer of one tile: its store comes from the hub and lives as long as the tile is mounted (and a while after).
-export function SurfaceLayer({ hub, id, slot, selfId, canDraw, canModerate, armedByDefault, coarse, toolKey, color, label, onEditing }: LayerProps) {
+export function SurfaceLayer({ hub, id, slot, selfId, canDraw, canModerate, armedByDefault, coarse, sharingScreen, toolKey, color, label, onEditing }: LayerProps) {
   const sync = useSurface(hub, id);
-  return <AnnotationLayer key={id} shareId={id} sync={sync} selfId={selfId} canDraw={canDraw} canModerate={canModerate} armedByDefault={armedByDefault} coarse={coarse} toolKey={toolKey} hotkeysEnabled={false} color={color} tone="light" label={label} handle={slot.handle} onEdge={slot.onEdge} onEditing={onEditing} />;
+  return <AnnotationLayer key={id} shareId={id} sync={sync} selfId={selfId} canDraw={canDraw} canModerate={canModerate} armedByDefault={armedByDefault} coarse={coarse} sharingScreen={sharingScreen} toolKey={toolKey} hotkeysEnabled={false} color={color} tone="light" label={label} handle={slot.handle} onEdge={slot.onEdge} onEditing={onEditing} />;
 }

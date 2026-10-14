@@ -55,7 +55,7 @@ function RecordingScene({ roomId, access, connected }: { roomId: string; access:
     setStageMemo({ workspaceKey, shareKey, latest });
   }
   const stage = nextStage({ workspaceOpen: Boolean(workspaceKey), shareActive: Boolean(screen), latest: stageMemo.latest, choice: null });
-  const workspaceLayer: WorkspaceLayerProps = { hub, selfId: "", canDraw: false, canModerate: false, armedByDefault: false, coarse: false };
+  const workspaceLayer: WorkspaceLayerProps = { hub, selfId: "", canDraw: false, canModerate: false, armedByDefault: false, coarse: false, sharingScreen: false };
   const [refresher] = useState(() => {
     let stateKey = "";
     return createStateRefresher({

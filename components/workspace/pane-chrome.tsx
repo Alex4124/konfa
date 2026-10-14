@@ -11,7 +11,7 @@ import type { SurfaceHub } from "@/lib/surface-hub";
 export type WorkspacePart = "board" | "doc";
 export type Orientation = "row" | "column";
 // The annotation layers' inputs shared by every tile of both parts (each tile takes its store from the hub).
-export type WorkspaceLayerProps = { hub: SurfaceHub; selfId: string; canDraw: boolean; canModerate: boolean; armedByDefault: boolean; coarse: boolean };
+export type WorkspaceLayerProps = { hub: SurfaceHub; selfId: string; canDraw: boolean; canModerate: boolean; armedByDefault: boolean; coarse: boolean; sharingScreen: boolean };
 export type WorkspaceHostActions = {
   clearBoard(): void;
   collapse(part: WorkspacePart, collapsed: boolean): void;
