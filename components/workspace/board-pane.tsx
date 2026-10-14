@@ -54,7 +54,7 @@ export function BoardPane({ view, layer, drawing, follow, highlight, orientation
       tile={(index, slot) => <>
         {/* Lines, shapes, text and moved marks stay inside a band: the seam shows while such a tool is armed. */}
         {drawing.seams && <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 border-b border-dashed border-slate-400/60" />}
-        <SurfaceLayer hub={layer.hub} id={boardSurface(view.id, index)} slot={slot} selfId={layer.selfId} canDraw={layer.canDraw} canModerate={layer.canModerate} armedByDefault={layer.armedByDefault} coarse={layer.coarse} toolKey={drawing.toolKey} color={drawing.color} label="Пометки на доске" onEditing={(style) => onEditing("board", style)} />
+        <SurfaceLayer hub={layer.hub} id={boardSurface(view.id, index)} slot={slot} selfId={layer.selfId} canDraw={layer.canDraw} canModerate={layer.canModerate} armedByDefault={layer.armedByDefault} coarse={layer.coarse} sharingScreen={layer.sharingScreen} toolKey={drawing.toolKey} color={drawing.color} label="Пометки на доске" onEditing={(style) => onEditing("board", style)} />
       </>} />
   </PaneShell>;
 }

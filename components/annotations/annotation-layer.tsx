@@ -10,6 +10,7 @@ import { LaserLayer } from "@/components/annotations/laser";
 import { renderAnnotation, renderHighlight } from "@/components/annotations/render-annotation";
 import { TextEditor, type TextEditorState } from "@/components/annotations/text-editor";
 import { getMeasureEm } from "@/components/annotations/text-measure";
+import { PageCursor, toolCursor } from "@/components/annotations/tool-cursor";
 import { useFrame } from "@/components/shared-screen";
 import { useAnnotationHotkeys } from "@/hooks/use-annotation-hotkeys";
 import { useAnnotationPrefs, useArmedTool } from "@/hooks/use-annotation-prefs";
@@ -33,6 +34,7 @@ type Props = {
   canModerate?: boolean;
   armedByDefault?: boolean; // host or share owner: starts with the last drawing tool on a fine pointer
   coarse?: boolean;
+  sharingScreen?: boolean; // this member shares a screen now: the page draws the cursor (see PageCursor)
   toolbar?: { container: HTMLElement | null; layout: ToolbarLayout };
   portalContainer?: HTMLElement | null; // popovers and the dialog (PiP body); undefined = document.body
   showSavedAuthors?: boolean; // overrides prefs.showAuthors
@@ -93,7 +95,6 @@ const EMPTY_ITEMS: readonly BoardItem[] = [];
 const NO_LASERS: readonly DraftItem[] = [];
 const DOUBLE_TAP_MS = 400;
 const READABLE_TEXT_PX = 14; // smaller text asks the frame to zoom in (Stage 5)
-const LASER_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%23ff3b5c' stroke='white' stroke-width='1.5'/%3E%3C/svg%3E") 8 8, crosshair`;
 const now = () => performance.now();
 
 // The local stroke preview, the dragged id, the hover id and the own laser trails: they change every frame, so only the parts that draw them re-render.
@@ -259,7 +260,7 @@ const AuthorChips = memo(function AuthorChips({ store, items, live, box, scale, 
   return <g>{items.map((item) => hiddenIds.has(item.id) || item.id === dragged || item.id === editingId ? null : <MarkChip key={item.id} item={item} box={box} scale={scale} nameOf={store.nameOf} />)}</g>;
 });
 
-export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, toolbar, portalContainer, showSavedAuthors, toolKey, hotkeysEnabled = true, label = "Пометки поверх демонстрации", onToolChange, onNotice, color, tone = "dark", handle, onEditing, onEdge }: Props) {
+export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, sharingScreen = false, toolbar, portalContainer, showSavedAuthors, toolKey, hotkeysEnabled = true, label = "Пометки поверх демонстрации", onToolChange, onNotice, color, tone = "dark", handle, onEditing, onEdge }: Props) {
   const [prefs, updatePrefs] = useAnnotationPrefs();
   const [armed, setArmed] = useArmedTool(toolKey ?? shareId, defaultToolFor({ armedByDefault, coarse, lastDrawTool: prefs.lastDrawTool }));
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
@@ -938,7 +939,8 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
 
   useEffect(() => { if (!permitted) onRevoked(); }, [permitted]);
 
-  const cursor = !drawing ? "default" : tool === "laser" ? LASER_CURSOR : textTool ? "text" : tool === "move" ? "grab" : tool === "pen" ? "url('/cursors/pen.svg') 4 28, crosshair" : tool === "marker" ? "url('/cursors/marker.svg') 4 28, crosshair" : tool === "eraser" ? "url('/cursors/eraser.svg') 7 25, crosshair" : "crosshair";
+  const toolShape = drawing ? toolCursor(tool, textTool) : null;
+  const cursor = !toolShape ? "default" : sharingScreen ? "none" : toolShape.css;
   const editorMounted = active && ready && (editing !== null || textTool || tool === "move");
   // The svg is select-none: a mouse stroke across text marks would select them, and a press on a selection starts a native drag (pointercancel).
 
@@ -954,6 +956,7 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
         <Lasers store={sync.store} live={live} box={size} win={win} selfId={selfId} scale={scale} />
       </>}
     </svg>
+    {sharingScreen && toolShape && svgEl && <PageCursor target={svgEl} image={toolShape.image} />}
     {editorMounted && <TextEditor editorRef={editorRef} state={editing} box={size} coarse={coarse} scale={scale} onChange={(text) => { if (editing) setEditing({ ...editing, text }); }} onCommit={() => { commitText(); }} onCancel={cancelText} />}
     {permitted && toolbar?.container && createPortal(<AnnotationToolbar tool={tool} prefs={prefs} layout={toolbar.layout} coarse={coarse} canModerate={canModerate} markCount={items.length} canUndo={history.canUndo && synced} canRedo={history.canRedo && synced} boxHeight={size.height} editingText={Boolean(editing)} textStyle={editing ? { color: editing.color, size: nearestTextSize(editing.fontSize) } : null} openPicker={openPicker} portalContainer={portalContainer} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={() => setClearOpen(true)} onFingersDraw={(enabled) => updatePrefs({ fingersDraw: enabled })} />, toolbar.container)}
     {clearAllowed && <ClearAllDialog open={clearOpen} count={items.length} container={portalContainer} onOpenChange={setClearOpen} onConfirm={() => void actions?.clear()} />}
