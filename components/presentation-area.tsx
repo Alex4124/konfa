@@ -77,8 +77,6 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   const participantsOnTop = area.width <= 0 ? true : expanded ? area.width >= area.height : stripPlacement({ width: area.width - toolbarColumn, height: area.height - toolbarRow }, frameAspect, { top: strips.top.extent, left: strips.left.extent }) === "top";
   const strip = participantsOnTop ? strips.top : strips.left;
   const stripShown = !expanded && strip.extent > 0;
-  // While a stroke is in progress (data-annotating on the layer's svg) the overlays fade and let the pointer through.
-  const fade = "transition-opacity group-has-data-[annotating=true]/presentation:pointer-events-none group-has-data-[annotating=true]/presentation:opacity-30";
   // The expanded participants panel starts right of the toolbar column (w-15 + 12 px), so it never covers the tools.
   const besideColumn = toolbarVisible && placement === "column";
   const overlayAt = besideColumn ? "left-18 top-3" : "left-3 top-3";
@@ -184,17 +182,17 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
         {!expanded && !placeholder && <span className="pointer-events-none absolute left-3 top-3 max-w-[50%] truncate rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white short:hidden">{activeScreen.participant.name || "Демонстрация экрана"}</span>}
       </div>
       {toolbarVisible && <div ref={setToolbarContainer} className={placement === "overlay"
-        ? `absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-272px)] -translate-x-1/2 justify-center ${fade}`
+        ? "absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-272px)] -translate-x-1/2 justify-center"
         : placement === "column" ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 py-1"} />}
     </div>
 
-    <div style={{ "--strip": `${stripShown && participantsOnTop ? strip.extent : 0}px` } as CSSProperties} className={`absolute right-3 top-[calc(var(--strip)+12px)] z-40 flex items-center gap-2 short:top-3 ${fade}`}>
+    <div style={{ "--strip": `${stripShown && participantsOnTop ? strip.extent : 0}px` } as CSSProperties} className="absolute right-3 top-[calc(var(--strip)+12px)] z-40 flex items-center gap-2 short:top-3">
       {stripShown && <CameraSizeControl className="bg-[#0e192c]/85 shadow-xl" />}
       {actions}
       <Button variant="secondary" size="icon-lg" title={expanded ? "Свернуть экран" : "Развернуть экран"} aria-label={expanded ? "Свернуть экран" : "Развернуть экран"} className={clusterButton} onClick={() => expanded ? onCollapse() : onExpand()}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
     </div>
 
-    {expanded && <div className={`absolute z-30 flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/15 bg-[#14243a]/90 shadow-2xl backdrop-blur-md ${fade} ${participantsOnTop
+    {expanded && <div className={`absolute z-30 flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/15 bg-[#14243a]/90 shadow-2xl backdrop-blur-md ${participantsOnTop
       ? overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} w-fit max-h-[min(50vh,440px)] ${besideColumn ? "max-w-[calc(100%-136px)]" : "max-w-[calc(100%-76px)]"}` : `${overlayAt} max-h-[min(50vh,440px)] ${besideColumn ? "w-[min(360px,calc(100%-136px))]" : "w-[min(360px,75vw)]"}`
       : overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} h-fit max-h-[calc(100%-24px)] w-[clamp(110px,16vw,180px)]` : `${overlayAt} bottom-3 ${besideColumn ? "w-[min(340px,calc(100%-136px))]" : "w-[min(340px,75vw)]"}`}`}>
       <div className="flex shrink-0 items-center justify-between gap-1 p-1.5">

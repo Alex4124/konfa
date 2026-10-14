@@ -333,11 +333,10 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     stroke.timer = null;
   }
 
-  // The stroke becomes real: drawn, sent to peers, and the overlays around the frame fade (data-annotating).
+  // The stroke becomes real: drawn and sent to peers.
   function reveal(stroke: Stroke) {
     stroke.tentative = false;
     stopTimer(stroke);
-    svgEl?.setAttribute("data-annotating", "true");
     if (!actions) return;
     const timers = win ?? undefined;
     if (stroke.type === "erase") {
@@ -372,7 +371,6 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     strokeRef.current = null;
     if (!stroke) return;
     stopTimer(stroke);
-    svgEl?.removeAttribute("data-annotating");
     live.set({ mark: null, hideId: null, ...(stroke.type === "laser" ? { lasers: live.lasers().filter((item) => item.key !== stroke.id) } : {}) });
     if (stroke.type === "erase") void actions?.flushErase();
     else if (stroke.sent) actions?.draft.cancel(stroke.type === "drag" ? stroke.draftId : stroke.id);
@@ -715,7 +713,6 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
   function endStroke(stroke: Stroke, { end, rect, shiftKey, clientX, clientY, before, exact }: StrokeEnd) {
     strokeRef.current = null;
     stopTimer(stroke);
-    svgEl?.removeAttribute("data-annotating");
     if (stroke.type === "erase") {
       if (exact) eraseAlong(stroke, [...(before ?? []), end], rect);
       if (stroke.queued.length) actions?.erase(stroke.queued, stroke.gesture);

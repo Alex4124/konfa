@@ -34,7 +34,6 @@ const TOOLBAR_ROW_PX = 56;
 const TOOLBAR_COLUMN_PX = 60;
 const ROW_MARGIN = 8;
 const EMPTY: Size = { width: 0, height: 0 };
-const fade = "transition-opacity group-has-data-[annotating=true]/presentation:pointer-events-none group-has-data-[annotating=true]/presentation:opacity-30";
 
 // The presenter's «Окно пометок поверх экрана»: the live share, everyone's marks, drafts and the laser, drawn in a Document PiP window.
 // Same React tree as the room (portal), so no second LiveKit or sync subscription; everything inside resolves its window via ownerDocument.
@@ -103,7 +102,7 @@ export function PresenterPip({ pipWindow, shareId, trackRef, surface, layer, not
           {hideVideo && <span className="pointer-events-none absolute inset-0 grid place-items-center p-3 text-center text-xs text-slate-500">Видео скрыто — видны только пометки</span>}
           <AnnotationLayer key={shareId} {...layer} shareId={shareId} coarse={coarse} armedByDefault toolbar={{ container: toolbar, layout }} portalContainer={body} onNotice={onNotice} />
         </SharedScreen> : <p className="grid h-full place-items-center p-3 text-center text-sm text-slate-300">Подключаем показ…</p>}
-        {monitor && bannerHidden && <Button type="button" variant="secondary" size="icon-sm" title={videoLabel} aria-label={videoLabel} className={`absolute bottom-2 right-2 z-30 bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a] ${fade}`} onClick={() => setShowVideo(!showVideo)}>{showVideo ? <EyeOff /> : <Eye />}</Button>}
+        {monitor && bannerHidden && <Button type="button" variant="secondary" size="icon-sm" title={videoLabel} aria-label={videoLabel} className="absolute bottom-2 right-2 z-30 bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a]" onClick={() => setShowVideo(!showVideo)}>{showVideo ? <EyeOff /> : <Eye />}</Button>}
         <div role="status" aria-live="polite" className="pointer-events-none absolute inset-x-2 top-2 z-30 flex justify-center">{shownNotice && <span className="max-w-full rounded-lg border border-white/15 bg-[#1c2c45]/95 px-3 py-1.5 text-center text-xs text-white shadow-xl">{shownNotice.text}</span>}</div>
       </div>
       {toolbarVisible && <div ref={setToolbar} className={column ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 py-1"} />}
