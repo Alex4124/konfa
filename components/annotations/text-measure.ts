@@ -1,6 +1,8 @@
+import { useCallback, useSyncExternalStore } from "react";
 import { estimateMeasureEm, TEXT_WEIGHT, textFontCss, type MeasureEm } from "@/lib/annotation-text";
 
 const MEASURE_PX = 100;
+const FAMILY = "Arimo"; // TEXT_FONT's web font (app/globals.css)
 const CACHE_LIMIT = 2000;
 
 type Context = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
@@ -10,10 +12,33 @@ let context: Context | null | undefined;
 let contextFont = "";
 const cache = new Map<string, number>();
 const measures = new Map<number, MeasureEm>();
+const listeners = new Set<() => void>();
+let watching = false;
+
+// Widths taken before Arimo arrived are the fallback's (Roboto on Android): when it lands, drop them and the canvas (Chrome
+// keeps the font it resolved for a context) and hand out new measure functions, so every mark lays itself out again.
+function watchFonts() {
+  const fonts = globalThis.document?.fonts;
+  if (watching || !fonts) return;
+  watching = true;
+  fonts.addEventListener("loadingdone", (event) => {
+    if (!(event as FontFaceSetLoadEvent).fontfaces.some((loaded) => loaded.family.replace(/["']/g, "") === FAMILY)) return;
+    cache.clear();
+    measures.clear();
+    context = undefined;
+    contextFont = "";
+    for (const listener of listeners) listener();
+  });
+  void fonts.load(textFontCss(MEASURE_PX), "AaЯя").catch(() => {}); // starts the Latin and Cyrillic files
+}
+
+// Starts loading the font before the first mark is measured (the pre-join page calls it).
+export const primeTextFont = watchFonts;
 
 function canvasContext(): Context | null {
   if (context !== undefined) return context;
   if (typeof window === "undefined") return null;
+  watchFonts();
   let next: Context | null = null;
   try {
     if (typeof OffscreenCanvas === "function") next = new OffscreenCanvas(1, 1).getContext("2d");
@@ -56,7 +81,8 @@ function measureEm(text: string, weight: number): number {
   return width;
 }
 
-// Width in em of TEXT_FONT at `weight`; stable per weight, safe to call during server render (estimates there).
+// Width in em of TEXT_FONT at `weight`; stable per weight until the web font arrives, safe to call during server render
+// (estimates there).
 export function getMeasureEm(weight = TEXT_WEIGHT): MeasureEm {
   let measure = measures.get(weight);
   if (!measure) {
@@ -64,4 +90,16 @@ export function getMeasureEm(weight = TEXT_WEIGHT): MeasureEm {
     measures.set(weight, measure);
   }
   return measure;
+}
+
+function subscribe(onChange: () => void): () => void {
+  listeners.add(onChange);
+  watchFonts();
+  return () => { listeners.delete(onChange); };
+}
+
+// getMeasureEm for rendering: a new function, and so a new render, once the web font has loaded.
+export function useTextMeasure(weight = TEXT_WEIGHT): MeasureEm {
+  const get = useCallback(() => getMeasureEm(weight), [weight]);
+  return useSyncExternalStore(subscribe, get, get);
 }

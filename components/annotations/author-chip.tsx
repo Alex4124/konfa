@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { getMeasureEm } from "@/components/annotations/text-measure";
+import { useTextMeasure } from "@/components/annotations/text-measure";
 import { TEXT_FONT, type Size } from "@/lib/annotation-geometry";
 import { CHIP_GAP, chipFontPx, chipName, placeChip } from "@/lib/annotation-tools";
 
@@ -15,12 +15,13 @@ type Props = {
 
 // Name label with the author's colour dot; never takes the pointer.
 export const AuthorChip = memo(function AuthorChip({ anchor, name, color, box, scale = 1, prefer = "below", opacity }: Props) {
+  const measure = useTextMeasure(600);
   if (!(box.width > 0) || !(box.height > 0)) return null;
   const k = 1 / (scale > 0 ? scale : 1);
   const font = chipFontPx(box.height);
   const label = chipName(name);
   const pad = font * .6, dot = font * .5;
-  const width = pad * 2 + dot + pad * .7 + getMeasureEm(600)(label) * font, height = font * 1.75;
+  const width = pad * 2 + dot + pad * .7 + measure(label) * font, height = font * 1.75;
   const [x, y] = placeChip(anchor, box, { width: width * k, height: height * k }, { prefer, gap: CHIP_GAP * k });
   return <g transform={`translate(${x} ${y}) scale(${k})`} opacity={opacity} pointerEvents="none" aria-hidden>
     <rect width={width} height={height} rx={6} fill="#0e192c" fillOpacity={.85} />
