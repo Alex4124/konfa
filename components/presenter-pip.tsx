@@ -11,6 +11,7 @@ import type { PresentationLayerProps } from "@/components/presentation-area";
 import { useAnnotationPrefs, useArmedTool } from "@/hooks/use-annotation-prefs";
 import { useBoard, type AnnotationSync } from "@/hooks/use-annotation-sync";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useShortLayout } from "@/hooks/use-short-layout";
 import { defaultToolFor, toolbarLayoutFor } from "@/lib/annotation-tools";
 import { marksCountLabel } from "@/lib/presenter-alerts";
 import { stripPlacement } from "@/lib/view-transform";
@@ -40,7 +41,7 @@ const EMPTY: Size = { width: 0, height: 0 };
 export function PresenterPip({ pipWindow, shareId, trackRef, surface, layer, notice, onNotice }: Props) {
   const body = pipWindow.document.body;
   const coarse = useMediaQuery("(pointer: coarse)", pipWindow);
-  const short = useMediaQuery("(max-height: 520px)", pipWindow);
+  const short = useShortLayout(pipWindow);
   const monitor = surface === "monitor";
   const [videoFor, setVideoFor] = useState(surface);
   const [showVideo, setShowVideo] = useState(!monitor); // a whole-screen share would show an endless tunnel: marks only by default

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Maximize2, Minimize2, MonitorUp, Presentation, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import { PaneRail, type PaneApi, type PaneDrawing, type WorkspaceHostActions, ty
 import { useAnnotationHotkeys } from "@/hooks/use-annotation-hotkeys";
 import { useAnnotationPrefs, useArmedTool } from "@/hooks/use-annotation-prefs";
 import { useCameraSize } from "@/hooks/use-camera-size";
-import { useMediaQuery } from "@/hooks/use-media-query";
+import { useShortLayout } from "@/hooks/use-short-layout";
 import type { MaterialUpload } from "@/hooks/use-material-upload";
 import { useHubHistory } from "@/hooks/use-surface-hub";
 import type { WorkspaceFollow } from "@/hooks/use-workspace-view";
@@ -74,7 +74,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const columnRef = useRef<HTMLDivElement>(null);
   const boardApi = useRef<PaneApi>(null);
   const docApi = useRef<PaneApi>(null);
-  const short = useMediaQuery("(max-height: 520px)");
+  const short = useShortLayout();
   const [cameraSize] = useCameraSize();
   const [prefs, updatePrefs] = useAnnotationPrefs();
   const toolKey = `ws:${view.id}`;
@@ -111,19 +111,24 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   if (openPicker && !toolbarVisible) setOpenPicker(null);
   if (clearing && (!toolbarVisible || (clearing.part === "doc" && clearing.docId !== docId))) setClearing(null);
 
-  useEffect(() => {
+  // Measured before the first paint too: an unmeasured frame showed the full toolbar and no camera strip for a moment.
+  useLayoutEffect(() => {
     const element = areaRef.current, columnElement = columnRef.current, rootElement = rootRef.current;
     if (!element || !columnElement || !rootElement) return;
     const win = rootElement.ownerDocument.defaultView;
+    const size = (target: Element, rect: { width: number; height: number }) => {
+      const width = Math.round(rect.width), height = Math.round(rect.height);
+      if (target === columnElement) setColumnWidth(width);
+      else if (target === rootElement) {
+        const vw = win?.innerWidth ?? 0, vh = win?.innerHeight ?? 0;
+        setStage((current) => current.width === width && current.height === height && current.vw === vw && current.vh === vh ? current : { width, height, vw, vh });
+      } else setArea((current) => current.width === width && current.height === height ? current : { width, height });
+    };
+    // The area has p-2: the observer reports its content box.
+    for (const target of [rootElement, columnElement]) size(target, target.getBoundingClientRect());
+    size(element, { width: element.clientWidth - 16, height: element.clientHeight - 16 });
     const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const width = Math.round(entry.contentRect.width), height = Math.round(entry.contentRect.height);
-        if (entry.target === columnElement) setColumnWidth(width);
-        else if (entry.target === rootElement) {
-          const vw = win?.innerWidth ?? 0, vh = win?.innerHeight ?? 0;
-          setStage((current) => current.width === width && current.height === height && current.vw === vw && current.vh === vh ? current : { width, height, vw, vh });
-        } else setArea((current) => current.width === width && current.height === height ? current : { width, height });
-      }
+      for (const entry of entries) size(entry.target, entry.contentRect);
     });
     observer.observe(element);
     observer.observe(columnElement);

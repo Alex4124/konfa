@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import type { TrackReference } from "@livekit/components-react";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, LayoutGrid, List, Maximize2, Minimize2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { CameraSizeControl, TileStrip, type RenderTile } from "@/components/part
 import { SharedScreen } from "@/components/shared-screen";
 import { useAnnotationPrefs, useArmedTool } from "@/hooks/use-annotation-prefs";
 import { useCameraSize } from "@/hooks/use-camera-size";
-import { useMediaQuery } from "@/hooks/use-media-query";
+import { useShortLayout } from "@/hooks/use-short-layout";
 import { defaultToolFor, toolbarLayoutFor } from "@/lib/annotation-tools";
 import { fitStrip } from "@/lib/tile-grid";
 import { stripPlacement } from "@/lib/view-transform";
@@ -50,16 +50,18 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   const [frameAspect, setFrameAspect] = useState(16 / 9);
   const [toolbarContainer, setToolbarContainer] = useState<HTMLDivElement | null>(null);
   const [columnWidth, setColumnWidth] = useState(0);
+  const [clusterWidth, setClusterWidth] = useState(64); // the top-right buttons: the expanded participants panel stops short of them
   const [wasExpanded, setWasExpanded] = useState(expanded);
   const presentationRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
+  const clusterRef = useRef<HTMLDivElement>(null);
   const overlayNavigationRef = useRef<HTMLDivElement>(null);
   const overlayTilesRef = useRef<HTMLDivElement>(null);
   const shareId = state.room.activeShareId;
   const toolbarVisible = canShowToolbar && !placeholder;
   const overlayMemberIds = members.map((person) => person.id).join("\u0000");
   const coarse = layerProps.coarse ?? false;
-  const short = useMediaQuery("(max-height: 520px)");
+  const short = useShortLayout();
   const [prefs] = useAnnotationPrefs();
   const [cameraSize] = useCameraSize();
   // Same store and fallback as the layer, so the frame's interaction always matches the armed tool.
@@ -79,7 +81,7 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   const stripShown = !expanded && strip.extent > 0;
   // The expanded participants panel starts right of the toolbar column (w-15 + 12 px), so it never covers the tools.
   const besideColumn = toolbarVisible && placement === "column";
-  const overlayAt = besideColumn ? "left-18 top-3" : "left-3 top-3";
+  const overlayAt = besideColumn ? "left-18 top-[max(0.75rem,env(safe-area-inset-top))]" : "left-3 top-[max(0.75rem,env(safe-area-inset-top))]";
 
   if (wasExpanded !== expanded) {
     setWasExpanded(expanded);
@@ -89,22 +91,28 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
     }
   }
 
-  useEffect(() => {
-    const element = presentationRef.current, column = columnRef.current;
-    if (!element || !column) return;
+  // Measured before the first paint too: an unmeasured frame showed the full toolbar and no camera strip for a moment.
+  useLayoutEffect(() => {
+    const element = presentationRef.current, column = columnRef.current, cluster = clusterRef.current;
+    if (!element || !column || !cluster) return;
     const win = element.ownerDocument.defaultView;
+    const sizeArea = (width: number, height: number) => {
+      const next: Area = { width: Math.round(width), height: Math.round(height), vw: win?.innerWidth ?? 0, vh: win?.innerHeight ?? 0 };
+      setArea((current) => current.width === next.width && current.height === next.height && current.vw === next.vw && current.vh === next.vh ? current : next);
+    };
+    const first = element.getBoundingClientRect();
+    sizeArea(first.width, first.height);
+    setColumnWidth(Math.round(column.getBoundingClientRect().width));
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        if (entry.target !== element) {
-          setColumnWidth(Math.round(entry.contentRect.width));
-          continue;
-        }
-        const next: Area = { width: Math.round(entry.contentRect.width), height: Math.round(entry.contentRect.height), vw: win?.innerWidth ?? 0, vh: win?.innerHeight ?? 0 };
-        setArea((current) => current.width === next.width && current.height === next.height && current.vw === next.vw && current.vh === next.vh ? current : next);
+        if (entry.target === element) sizeArea(entry.contentRect.width, entry.contentRect.height);
+        else if (entry.target === column) setColumnWidth(Math.round(entry.contentRect.width));
+        else setClusterWidth(Math.round(entry.contentRect.width));
       }
     });
     observer.observe(element);
     observer.observe(column);
+    observer.observe(cluster);
     return () => observer.disconnect();
   }, [expanded]);
 
@@ -171,7 +179,7 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
     updateOverlayNavigation();
   }
 
-  return <div ref={presentationRef} className={`group/presentation relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0e192c] ${participantsOnTop ? "flex-col" : "flex-row"}`}>
+  return <div ref={presentationRef} style={{ "--cluster": `${clusterWidth}px` } as CSSProperties} className={`group/presentation relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0e192c] ${participantsOnTop ? "flex-col" : "flex-row"}`}>
     {stripShown && <TileStrip members={members} renderTile={renderTile} placement={participantsOnTop ? "top" : "left"} strip={strip} />}
 
     <div ref={columnRef} className={`relative flex min-h-0 min-w-0 flex-1 ${placement === "column" ? "flex-row" : "flex-col"}`}>
@@ -179,21 +187,21 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
         {placeholder ?? <SharedScreen trackRef={activeScreen} frameless zoomable interaction={interaction} resetKey={shareId} onFrameChange={setFrameAspect}>
           {shareId && <AnnotationLayer key={shareId} {...layerProps} shareId={shareId} toolbar={{ container: toolbarContainer, layout: toolbarLayout }} onToolChange={toolChanged} />}
         </SharedScreen>}
-        {!expanded && !placeholder && <span className="pointer-events-none absolute left-3 top-3 max-w-[50%] truncate rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white short:hidden">{activeScreen.participant.name || "Демонстрация экрана"}</span>}
+        {!expanded && !placeholder && <span className="pointer-events-none absolute left-3 top-3 max-w-[min(50%,calc(100%-var(--cluster)-36px))] truncate rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white short:hidden">{activeScreen.participant.name || "Демонстрация экрана"}</span>}
       </div>
       {toolbarVisible && <div ref={setToolbarContainer} className={placement === "overlay"
         ? "absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-272px)] -translate-x-1/2 justify-center"
         : placement === "column" ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 py-1"} />}
     </div>
 
-    <div style={{ "--strip": `${stripShown && participantsOnTop ? strip.extent : 0}px` } as CSSProperties} className="absolute right-3 top-[calc(var(--strip)+12px)] z-40 flex items-center gap-2 short:top-3">
+    <div ref={clusterRef} style={{ "--strip": `${stripShown && participantsOnTop ? strip.extent : 0}px` } as CSSProperties} className={`absolute right-3 z-40 flex items-center gap-2 ${expanded ? "top-[max(0.75rem,env(safe-area-inset-top))]" : "top-[calc(var(--strip)+12px)] short:top-3"}`}>
       {stripShown && <CameraSizeControl className="bg-[#0e192c]/85 shadow-xl" />}
       {actions}
       <Button variant="secondary" size="icon-lg" title={expanded ? "Свернуть экран" : "Развернуть экран"} aria-label={expanded ? "Свернуть экран" : "Развернуть экран"} className={clusterButton} onClick={() => expanded ? onCollapse() : onExpand()}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
     </div>
 
     {expanded && <div className={`absolute z-30 flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/15 bg-[#14243a]/90 shadow-2xl backdrop-blur-md ${participantsOnTop
-      ? overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} w-fit max-h-[min(50vh,440px)] ${besideColumn ? "max-w-[calc(100%-136px)]" : "max-w-[calc(100%-76px)]"}` : `${overlayAt} max-h-[min(50vh,440px)] ${besideColumn ? "w-[min(360px,calc(100%-136px))]" : "w-[min(360px,75vw)]"}`
+      ? overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} w-fit max-h-[min(50dvh,440px)] ${besideColumn ? "max-w-[calc(100%-var(--cluster)-96px)]" : "max-w-[calc(100%-var(--cluster)-36px)]"}` : `${overlayAt} max-h-[min(50dvh,440px)] ${besideColumn ? "w-[min(360px,calc(100%-var(--cluster)-96px))]" : "w-[min(360px,calc(100%-var(--cluster)-36px))]"}`
       : overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} h-fit max-h-[calc(100%-24px)] w-[clamp(110px,16vw,180px)]` : `${overlayAt} bottom-3 ${besideColumn ? "w-[min(340px,calc(100%-136px))]" : "w-[min(340px,75vw)]"}`}`}>
       <div className="flex shrink-0 items-center justify-between gap-1 p-1.5">
         {overlayCollapsed ? <Button variant="ghost" size="sm" aria-label="Развернуть панель участников" aria-expanded={false} className="text-white hover:bg-white/10 hover:text-white" onClick={() => setOverlayCollapsed(false)}><Users size={16} />{members.length}{participantsOnTop ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</Button> : <>
@@ -212,8 +220,8 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
             <Button variant="ghost" size="icon-xs" title="Следующие участники" aria-label="Следующие участники" disabled={!overlayNavigation.canNext} className="text-white hover:bg-white/10 hover:text-white" onClick={() => pageOverlay(1)}>{participantsOnTop ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</Button>
           </div>}
           <div ref={overlayTilesRef} aria-label="Видео участников" onScroll={updateOverlayNavigation} className={participantsOnTop
-            ? "flex h-[clamp(84px,13vh,120px)] w-max max-w-full min-w-0 gap-2 overflow-x-auto p-2"
-            : "flex min-h-0 flex-col gap-2 overflow-y-auto p-2"}>
+            ? "flex h-[clamp(84px,13dvh,120px)] w-max max-w-full min-w-0 gap-2 overflow-x-auto overscroll-contain p-2"
+            : "flex min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain p-2"}>
             {members.map((person) => renderTile(person, participantsOnTop ? "top" : "left"))}
           </div>
         </>

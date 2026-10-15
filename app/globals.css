@@ -22,6 +22,7 @@
   --input: #3b5069;
   --ring: #6de7d4;
   --radius: .85rem;
+  color-scheme: dark; /* the app is always dark: date and time pickers, autofill, scrollbars */
 }
 
 @theme inline {
@@ -49,13 +50,17 @@
   --font-sans: Arial, Helvetica, sans-serif;
 }
 
-@custom-variant short { @media (max-height: 520px) { @slot; } }
-@custom-variant roomy { @media (min-width: 48rem) and (min-height: 521px) { @slot; } }
+/* The room's landscape-phone layout: html[data-short], set by hooks/use-short-layout (kept while the keyboard has the height). */
+@custom-variant short (&:where([data-short] *));
+/* The app has no light theme: shadcn's dark: styles must not follow the system theme (no element has .dark). */
+@custom-variant dark (&:where(.dark, .dark *));
 @custom-variant tiny { @media (max-width: 359px), (max-height: 359px) { @slot; } }
 
 * { box-sizing: border-box; }
 body { margin: 0; padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); background: var(--background); color: var(--foreground); }
-button { cursor: pointer; }
+button:not(:disabled) { cursor: pointer; }
+/* Chrome before 108 has no dvh: the room would collapse to its content. */
+@supports not (height: 100dvh) { .h-dvh { height: 100vh; } .min-h-dvh { min-height: 100vh; } }
 /* A lesson on a touch screen (hooks/use-lesson-touch-guard): a palm resting next to the stylus selects no text, raises no
    «Скопировать» menu and lifts no image or link. Fields stay selectable and keep their Paste menu. */
 @media (pointer: coarse) {
@@ -63,6 +68,8 @@ button { cursor: pointer; }
   html[data-lesson-room] :is(img, a, video) { -webkit-user-drag: none; }
   html[data-lesson-room] :is(input, textarea) { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 }
+/* The room never scrolls: no rubber band on iOS, no pull-to-refresh on Android that would drop the lesson. */
+html[data-lesson-room], html[data-lesson-room] body { overscroll-behavior: none; }
 .home-shell { background: radial-gradient(circle at 80% 35%, #25436b 0, transparent 37%), radial-gradient(circle at 13% 86%, #17334a 0, transparent 30%), #0e192c; }
 .brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 14px; background: #6de7d4; color: #10243a; }
 .preview-tile { display: flex; height: 80px; align-items: center; justify-content: center; border-radius: 14px; background: #334a67; position: relative; }

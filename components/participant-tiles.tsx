@@ -53,7 +53,7 @@ export function TileGrid<T extends Tiled = Member>({ members, renderTile, gap = 
 
   const fit = box ? fitTiles(members.length, box, { gap }) : null;
   return <div ref={ref} aria-label="Видео участников" className={`relative min-h-0 min-w-0 flex-1 overflow-hidden ${className}`}>
-    {fit && fit.columns > 0 && <div className={`absolute inset-0 flex justify-center ${fit.scroll ? "items-start overflow-y-auto" : "items-center"}`}>
+    {fit && fit.columns > 0 && <div className={`absolute inset-0 flex justify-center ${fit.scroll ? "items-start overflow-y-auto overscroll-contain" : "items-center"}`}>
       <Tiles members={members} renderTile={renderTile} fit={fit} gap={gap} />
     </div>}
   </div>;
@@ -64,7 +64,7 @@ export function TileGrid<T extends Tiled = Member>({ members, renderTile, gap = 
 export function TileStrip({ members, renderTile, placement, strip }: { members: Member[]; renderTile: RenderTile; placement: StripPlacement; strip: StripFit }) {
   if (!strip.fit.columns || strip.extent <= 0) return null;
   const top = placement === "top";
-  const flow = strip.fit.scroll ? (top ? "overflow-x-auto" : "items-start overflow-y-auto") : `justify-center overflow-hidden ${top ? "items-center" : "items-start"}`;
+  const flow = strip.fit.scroll ? (top ? "overflow-x-auto overscroll-contain" : "items-start overflow-y-auto overscroll-contain") : `justify-center overflow-hidden ${top ? "items-center" : "items-start"}`;
   return <div aria-label="Видео участников" style={top ? { height: strip.extent } : { width: strip.extent }} className={`flex shrink-0 short:hidden ${top ? "px-2 py-1" : "px-1 py-2"} ${flow}`}>
     <Tiles members={members} renderTile={renderTile} fit={strip.fit} gap={TILE_GAP} />
   </div>;

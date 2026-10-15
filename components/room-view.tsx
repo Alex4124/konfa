@@ -30,6 +30,7 @@ import { boardRange, canAnnotateBoard, nextStage, type StageChoice } from "@/lib
 import { orderMembers } from "@/lib/tile-grid";
 import { resetArmedTool } from "@/hooks/use-annotation-prefs";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useShortLayout } from "@/hooks/use-short-layout";
 import { useVisualViewportReset } from "@/hooks/use-visual-viewport-reset";
 import { useLessonTouchGuard } from "@/hooks/use-lesson-touch-guard";
 import { useDocumentPip, useDocumentPipSupported } from "@/hooks/use-document-pip";
@@ -62,6 +63,8 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
   const screens = useTracks([Track.Source.ScreenShare]);
   const [state, setState] = useState<RoomState | null>(null);
   const [error, setError] = useState("");
+  const [pollError, setPollError] = useState(""); // the 3-second room poll's: the next good poll clears it
+  const [dismissed, setDismissed] = useState(""); // the page's connection message the member closed (until another comes)
   const [panel, setPanel] = useState<"chat" | "people" | null>(() => typeof window !== "undefined" && window.matchMedia?.(PHONE_QUERY).matches ? null : "chat");
   const [moreOpen, setMoreOpen] = useState(false);
   const [expandedStage, setExpandedStage] = useState<string | null>(null); // "share:<id>" or "ws:<id>": that stage fills the room (local)
@@ -77,7 +80,7 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
   const [ownShare, setOwnShare] = useState<OwnShare | null>(null); // what this member last started sharing (whole screen or not)
   const [selfPreviewShareId, setSelfPreviewShareId] = useState<string | null>(null); // a whole-screen share the presenter chose to see anyway
   const [pipNotice, setPipNotice] = useState<PipNotice | null>(null);
-  const chatEnd = useRef<HTMLDivElement>(null);
+  const chatList = useRef<HTMLDivElement | null>(null);
   const messageInput = useRef<HTMLInputElement>(null);
   const stoppingShare = useRef(false);
   const endedRef = useRef(false);
@@ -107,7 +110,7 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
   const coarse = useMediaQuery("(pointer: coarse)");
   useEffect(() => { coarseRef.current = coarse; }, [coarse]);
   useLessonTouchGuard(coarse);
-  const isShort = useMediaQuery("(max-height: 520px)");
+  const isShort = useShortLayout();
   const canPublish = role !== "viewer";
   // A phone or a tablet with a front and a back camera gets the switch where the share button was: phone browsers
   // cannot share a screen. A computer keeps its bar as it was.
@@ -167,13 +170,14 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
       fetchState: async (signal) => await api("state?v=2", undefined, signal) as unknown as RoomState,
       sinks: [{ sink: sync, select: shareSnapshot }],
       onState: (next) => {
+        setPollError("");
         const rest = { ...next, annotations: [] };
         const key = JSON.stringify(rest);
         if (key === stateKey) return;
         stateKey = key;
         setState(rest);
       },
-      onError: (cause) => setError(cause instanceof Error ? cause.message : "Не удалось обновить комнату"),
+      onError: (cause) => setPollError(cause instanceof Error ? cause.message : "Не удалось обновить комнату"),
       timers: windowTimers,
       now: () => performance.now(),
     });
@@ -262,7 +266,12 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
     return () => { room.off(RoomEvent.DataReceived, onData); };
   }, [room, refresh]);
 
-  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [state?.messages.length]);
+  useEffect(() => { chatList.current?.scrollTo({ top: chatList.current.scrollHeight, behavior: "smooth" }); }, [state?.messages.length]);
+  // Stable, so it runs only when the list appears: the panel opened, the tab switched, the expanded stage collapsed.
+  const showLastMessage = useCallback((node: HTMLDivElement | null) => {
+    chatList.current = node;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, []);
   useEffect(() => {
     const syncMedia = () => {
       setMic(room.localParticipant.isMicrophoneEnabled);
@@ -599,6 +608,10 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
 
   const recordingStatus = state?.recording?.status;
   const shareStatus = role !== "host" && ["pending", "approved", "denied"].includes(myShareRequest?.status || "") ? myShareRequest?.status === "pending" ? "Ждём ведущего" : myShareRequest?.status === "approved" ? "Показ разрешён" : "Ведущий отклонил" : null;
+  // One message at a time, over the stage: it never pushes the stage down. ✕ closes whichever is shown.
+  const shownConnection = connectionError && connectionError !== dismissed ? connectionError : "";
+  const alertText = shownConnection || error || pollError;
+  const closeAlert = () => { if (shownConnection) setDismissed(shownConnection); else { setError(""); setPollError(""); } };
   // «Ещё» gathers what the footer hides on narrow phones; in landscape (header hidden) also the guest link and «Закончить конференцию».
   const moreInPortrait = canPublish || Boolean(state?.recording?.url); // hosts publish too
   const layerProps: PresentationLayerProps = { sync, selfId: joined.member.id, canDraw, canModerate: canModerateShare, armedByDefault: role === "host" || shareOwner, coarse, sharingScreen: isSharing };
@@ -632,23 +645,22 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
     cancelUpload: materials.cancel,
   } : null;
 
-  return <main className={`relative flex h-dvh touch-manipulation flex-col overflow-hidden bg-[#0e192c] text-white short:flex-row ${expanded ? "min-h-0" : "roomy:min-h-[540px]"}`}>
+  return <main className="relative flex h-dvh touch-manipulation flex-col overflow-hidden bg-[#0e192c] text-white short:flex-row">
     <RoomAudioRenderer />
-    <Toaster theme="dark" position="top-center" />
+    <Toaster theme="dark" position="top-center" offset={{ top: "calc(env(safe-area-inset-top) + 16px)" }} mobileOffset={{ top: "calc(env(safe-area-inset-top) + 12px)" }} />
     {pipWindow && <PresenterPip key={shareOwner ? activeShareId : null} pipWindow={pipWindow} shareId={shareOwner ? activeShareId : null} trackRef={shareOwner ? activeScreen : undefined} surface={ownSurface} layer={layerProps} notice={pipNotice} onNotice={showPipNotice} />}
     {!expanded && <header className="flex min-h-12 shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 pb-1.5 pt-[max(0.375rem,env(safe-area-inset-top))] sm:min-h-16 sm:gap-3 sm:px-6 short:hidden">
-      <div className="flex min-w-0 items-center gap-3"><span className="brand-mark !h-9 !w-9 shrink-0 !rounded-xl"><Video size={19} /></span><div className="min-w-0"><h1 className="truncate text-base font-semibold">{joined.kind === "webinar" ? "Вебинар" : "Встреча"}</h1><p className="truncate text-xs text-slate-400">{visibleMembers.length} из 50 участников</p></div></div>
+      <div className="flex min-w-0 items-center gap-3"><span className="brand-mark !h-9 !w-9 shrink-0 !rounded-xl"><Video size={19} /></span><div className="min-w-0"><h1 className="truncate text-base font-semibold">{joined.kind === "webinar" ? "Вебинар" : "Встреча"}</h1><p className="truncate text-xs text-slate-400">{state ? `${visibleMembers.length} из 50 участников` : "Подключаемся…"}</p></div></div>
       <div className="flex shrink-0 items-center justify-end gap-2">
         {recordingStatus === "recording" && <span title="Идёт запись" className="flex items-center gap-2 rounded-full bg-rose-500/15 px-2.5 py-1.5 text-xs font-medium text-rose-200 sm:px-3"><span className="h-2 w-2 animate-pulse rounded-full bg-rose-400" /><span className="hidden sm:inline">Идёт запись</span></span>}
         {recordingStatus === "processing" && <span title="Готовим запись" className="flex items-center gap-2 rounded-full bg-amber-400/15 px-2.5 py-1.5 text-xs text-amber-200 sm:px-3"><span className="h-2 w-2 rounded-full bg-amber-300 sm:hidden" /><span className="hidden sm:inline">Готовим запись</span></span>}
-        <Button variant="outline" size="sm" title="Ссылка для гостей" aria-label="Ссылка для гостей" className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => void copyGuestLink()}><Copy size={15} /><span className="hidden sm:inline">Ссылка для гостей</span></Button>
-        {role === "host" && <Button variant="destructive" size="sm" title="Закончить конференцию" aria-label="Закончить конференцию" disabled={busy === "end"} className="rounded-xl" onClick={() => void endConference()}><PhoneOff size={16} /><span className="hidden sm:inline">Закончить конференцию</span></Button>}
+        <Button variant="outline" size="sm" title="Ссылка для гостей" aria-label="Ссылка для гостей" className="border-white/20 bg-white/5 text-white hover:bg-white/10 hover:text-white" onClick={() => void copyGuestLink()}><Copy size={15} /><span className="hidden md:inline">Ссылка для гостей</span></Button>
+        {role === "host" && <Button variant="destructive" size="sm" title="Закончить конференцию" aria-label="Закончить конференцию" disabled={busy === "end"} className="rounded-xl" onClick={() => void endConference()}><PhoneOff size={16} /><span className="hidden md:inline">Закончить конференцию</span></Button>}
       </div>
     </header>}
 
-    {(error || connectionError) && <div role="alert" className={`flex items-center justify-between gap-3 bg-rose-500/90 px-5 py-2 text-sm text-white ${expanded ? "absolute left-1/2 top-14 z-50 w-[min(90vw,560px)] -translate-x-1/2 rounded-xl shadow-2xl" : "short:absolute short:left-1/2 short:top-2 short:z-50 short:w-[min(90vw,560px)] short:-translate-x-1/2 short:rounded-xl short:shadow-2xl"}`}><span>{connectionError || error}</span><button aria-label="Закрыть сообщение" onClick={() => setError("")}><X size={16} /></button></div>}
-
     <div className="relative flex min-h-0 min-w-0 flex-1">
+      {alertText && <div role="alert" className={`absolute inset-x-2 z-50 mx-auto flex max-w-[560px] items-center justify-between gap-3 rounded-xl bg-rose-500/95 py-1.5 pl-4 pr-1.5 text-sm text-white shadow-2xl ${expanded ? "top-14" : "top-2"} ${!expanded && panel ? "md:right-[368px] short:right-[348px]" : ""}`}><span className="min-w-0 break-words">{alertText}</span><Button variant="ghost" size="icon-sm" aria-label="Закрыть сообщение" className="shrink-0 text-white hover:bg-white/15 hover:text-white" onClick={closeAlert}><X size={16} /></Button></div>}
       <section className={`isolate flex min-w-0 flex-1 flex-col ${stage === "grid" ? "p-3 sm:p-5" : ""}`}>
         {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={id} isHost={role === "host"} canDraw={canDrawBoard} coarse={coarse} members={tileMembers} renderTile={renderParticipantTile} layer={workspaceLayer} follow={follow} host={workspaceHost} upload={materials.upload} expanded={expanded} onExpand={() => setExpandedStage(`ws:${view.id}`)} onCollapse={() => setExpandedStage(null)} onShowShare={shareActive ? () => chooseStage("share") : undefined} />
         : stage === "share" && activeScreen && state ? <PresentationArea state={state} activeScreen={activeScreen} members={tileMembers} expanded={expanded} onExpand={expandScreen} onCollapse={() => setExpandedStage(null)} renderTile={renderParticipantTile} renderParticipantList={renderParticipantList} layerProps={layerProps} toolbarVisible={canDraw} actions={shareActions} placeholder={mirrorGuard && activeShareId ? <MirrorPlaceholder sync={sync} shareId={activeShareId} selfId={joined.member.id} pipSupported={pipSupported} pipOpen={Boolean(pipWindow)} onPip={togglePip} onShow={() => setSelfPreviewShareId(activeShareId)} /> : undefined} /> : <TileGrid members={tileMembers} renderTile={renderParticipantTile} />}
@@ -658,34 +670,34 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
         <Tabs value={panel} onValueChange={(value) => setPanel(value as "chat" | "people")} className="flex h-full min-h-0 flex-col gap-0">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><TabsList className="bg-[#283a54]"><TabsTrigger value="chat">Чат</TabsTrigger><TabsTrigger value="people">Участники</TabsTrigger></TabsList><Button variant="ghost" size="icon" aria-label="Закрыть панель" className="text-slate-300 hover:bg-white/10 hover:text-white" onClick={() => setPanel(null)}><X /></Button></div>
           <TabsContent value="chat" className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">{state?.messages.length ? state.messages.map((item) => <div key={item.id} className="space-y-1"><div className="flex items-baseline justify-between gap-2"><strong className="text-sm text-[#9af4e7]">{item.name}</strong><span className="text-xs text-slate-500">{new Date(item.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</span></div><p className="break-words text-sm leading-relaxed text-slate-100">{item.body}</p></div>) : <p className="pt-8 text-center text-sm text-slate-400">Сообщений пока нет</p>}<div ref={chatEnd} /></div>
-            <form onSubmit={(event) => void sendMessage(event)} className="flex gap-2 border-t border-white/10 p-3">
+            <div ref={showLastMessage} className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">{state?.messages.length ? state.messages.map((item) => <div key={item.id} className="space-y-1"><div className="flex items-baseline justify-between gap-2"><strong className="min-w-0 truncate text-sm text-[#9af4e7]">{item.name}</strong><span className="shrink-0 text-xs text-slate-500">{new Date(item.created_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</span></div><p className="break-words text-sm leading-relaxed text-slate-100">{item.body}</p></div>) : <p className="pt-8 text-center text-sm text-slate-400">Сообщений пока нет</p>}</div>
+            <form onSubmit={(event) => void sendMessage(event)} className="flex items-center gap-2 border-t border-white/10 p-3">
               <input ref={messageInput} aria-label="Сообщение" maxLength={1000} enterKeyHint="send" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Написать сообщение…" className="h-10 min-w-0 flex-1 rounded-lg border border-white/15 bg-[#213650] px-3 text-base outline-none focus:border-[#6de7d4] md:text-sm pointer-coarse:text-base" />
               <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
-                <PopoverTrigger asChild><Button type="button" variant="secondary" size="icon" title="Добавить смайлик" aria-label="Добавить смайлик" className="shrink-0 bg-[#2d415d] text-white hover:bg-[#3e5673]"><Smile size={19} /></Button></PopoverTrigger>
-                <PopoverContent align="end" side="top" className="grid w-60 grid-cols-5 gap-1 border-white/15 bg-[#1c2c45] p-2">
+                <PopoverTrigger asChild><Button type="button" variant="secondary" size="icon-lg" title="Добавить смайлик" aria-label="Добавить смайлик" className="shrink-0 bg-[#2d415d] text-white hover:bg-[#3e5673]"><Smile size={19} /></Button></PopoverTrigger>
+                <PopoverContent align="end" side="top" className="grid w-60 grid-cols-5 place-items-center gap-1 border-white/15 bg-[#1c2c45] p-2">
                   {chatEmoji.map((emoji) => <button key={emoji} type="button" className="grid h-9 w-9 place-items-center rounded-md text-xl hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-[#6de7d4]" aria-label={`Вставить ${emoji}`} onClick={() => insertEmoji(emoji)}>{emoji}</button>)}
                 </PopoverContent>
               </Popover>
-              <Button type="submit" disabled={!message.trim() || busy === "message"} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]">Отправить</Button>
+              <Button type="submit" disabled={!message.trim() || busy === "message"} className="h-10 bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]">Отправить</Button>
             </form>
           </TabsContent>
-          <TabsContent value="people" className="min-h-0 flex-1 overflow-y-auto p-3">
+          <TabsContent value="people" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
             {renderParticipantList()}
           </TabsContent>
         </Tabs>
       </aside>}
     </div>
 
-    {!expanded && <footer className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-t border-white/10 bg-[#15243a] px-2 pb-[env(safe-area-inset-bottom)] sm:min-h-[72px] sm:px-6 short:min-h-0 short:w-16 short:flex-col short:justify-start short:gap-1 short:border-l short:border-t-0 short:px-1 short:pt-2 short:pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-      <div className="hidden min-w-0 sm:block short:hidden"><p className="truncate text-sm font-medium">{joined.member.name}</p><p className="text-xs text-slate-400">{role === "host" ? "Ведущий" : role === "speaker" ? "Выступающий" : "Зритель"}</p></div>
+    {!expanded && <footer className="flex min-h-[calc(3.5rem+env(safe-area-inset-bottom))] shrink-0 items-center justify-between gap-2 border-t border-white/10 bg-[#15243a] px-2 pb-[env(safe-area-inset-bottom)] sm:min-h-[calc(72px+env(safe-area-inset-bottom))] sm:px-6 short:min-h-0 short:w-16 short:flex-col short:justify-start short:gap-1 short:border-l short:border-t-0 short:px-1 short:pt-2 short:pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div className="hidden min-w-0 max-w-40 sm:block lg:max-w-56 short:hidden"><p className="truncate text-sm font-medium" title={joined.member.name}>{joined.member.name}</p><p className={`truncate text-xs ${shareStatus ? "text-[#9af4e7]" : "text-slate-400"}`}>{shareStatus ?? (role === "host" ? "Ведущий" : role === "speaker" ? "Выступающий" : "Зритель")}</p></div>
       {recordingStatus === "recording" && <span title="Идёт запись" className="hidden size-2.5 shrink-0 animate-pulse rounded-full bg-rose-400 short:block" />}
-      <div className="flex min-w-0 flex-1 items-center justify-start gap-1 overflow-x-auto sm:justify-center sm:gap-2 short:min-h-0 short:w-full short:flex-col short:justify-start short:gap-1 short:overflow-x-hidden short:overflow-y-auto">
+      <div className="-my-1 flex min-w-0 flex-1 items-center justify-center-safe gap-1 overflow-x-auto py-1 sm:gap-2 short:min-h-0 short:w-full short:flex-col short:justify-start short:gap-1 short:overflow-x-hidden short:overflow-y-auto">
         {canPublish && <>
           <Button variant="secondary" size="icon-lg" title={mic ? "Выключить микрофон" : "Включить микрофон"} aria-label={mic ? "Выключить микрофон" : "Включить микрофон"} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => void toggleMic()}>{mic ? <Mic /> : <MicOff />}</Button>
           <Popover>
             <PopoverTrigger asChild><Button variant="secondary" size="icon-xs" title="Настройки микрофона" aria-label="Настройки микрофона" className="relative z-10 -ml-4 self-end rounded-full bg-[#2d415d] text-white ring-2 ring-[#15243a] hover:bg-[#3e5673] max-sm:hidden short:hidden"><ChevronUp /></Button></PopoverTrigger>
-            <PopoverContent side="top" align="start" collisionPadding={8} className="w-72 border-white/15 bg-[#1c2c45] p-1.5 text-white">{noiseItem}</PopoverContent>
+            <PopoverContent side="top" align="start" collisionPadding={8} className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto border-white/15 bg-[#1c2c45] p-1.5 text-white">{noiseItem}</PopoverContent>
           </Popover>
           <Button variant="secondary" size="icon-lg" title={cam ? "Выключить камеру" : "Включить камеру"} aria-label={cam ? "Выключить камеру" : "Включить камеру"} disabled={cameraBusy} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => void toggleCam()}>{cam ? <Video /> : <VideoOff />}</Button>
           {canFlip && <Button variant="secondary" size="icon-lg" title={flipLabel(facing)} aria-label={flipLabel(facing)} disabled={cameraBusy} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => void flipCamera()}><SwitchCamera /></Button>}
@@ -695,7 +707,6 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
             else if (myShareRequest?.status === "pending") void action("share-requests", { action: "cancel", requestId: myShareRequest.id }, "shareRequest");
             else void action("share-requests", { action: "request" }, "shareRequest");
           }}>{isSharing ? <MonitorX /> : <MonitorUp />}</Button>}
-          {shareStatus && <span className="max-w-28 shrink-0 text-xs text-slate-200 max-sm:hidden short:hidden">{shareStatus}</span>}
         </>}
         <Button variant="secondary" size="icon-lg" title="Поднять или опустить руку" aria-label="Поднять или опустить руку" className={`rounded-full text-white hover:bg-[#3e5673] ${railSize} ${self?.raised_hand ? "bg-amber-500/40" : "bg-[#2d415d]"}`} onClick={() => void action("hand", {})}><Hand /></Button>
         <Button variant="secondary" size="icon-lg" title="Чат" aria-label="Чат" aria-pressed={panel === "chat"} className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize}`} onClick={() => setPanel(panel === "chat" ? null : "chat")}><MessageSquare /></Button>
@@ -704,7 +715,7 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
         {role === "host" && <Button variant="secondary" size="icon-lg" title={recordingStatus === "recording" ? "Остановить запись" : "Начать запись"} aria-label={recordingStatus === "recording" ? "Остановить запись" : "Начать запись"} disabled={busy === "recording" || recordingStatus === "processing"} className={`rounded-full text-white hover:bg-[#3e5673] max-sm:hidden short:hidden ${recordingStatus === "recording" ? "bg-rose-500/40" : "bg-[#2d415d]"}`} onClick={toggleRecording}><Radio /></Button>}
         <Popover open={moreOpen} onOpenChange={setMoreOpen}>
           <PopoverTrigger asChild><Button variant="secondary" size="icon-lg" title="Ещё" aria-label="Ещё" className={`rounded-full bg-[#2d415d] text-white hover:bg-[#3e5673] ${railSize} ${moreInPortrait ? "sm:hidden" : "hidden"} short:inline-flex`}><Ellipsis /></Button></PopoverTrigger>
-          <PopoverContent side={isShort ? "left" : "top"} align="end" collisionPadding={8} className="w-64 border-white/15 bg-[#1c2c45] p-1.5 text-white">
+          <PopoverContent side={isShort ? "left" : "top"} align="end" collisionPadding={8} className="max-h-(--radix-popover-content-available-height) w-64 overflow-y-auto border-white/15 bg-[#1c2c45] p-1.5 text-white">
             {canPublish && <div className="px-1.5 py-1"><BackgroundPicker background={background} onChange={onBackgroundChange} onError={setError} /></div>}
             {canPublish && <div className="sm:hidden short:block">{noiseItem}</div>}
             {shareStatus && <p className="px-3 py-1.5 text-xs text-slate-300">{shareStatus}</p>}
@@ -718,7 +729,7 @@ export function RoomView({ id, joined, initialCamera, initialFacing, background,
       </div>
       <div className="flex items-center gap-2 short:flex-col">
         {state?.recording?.url && <a href={state.recording.url} target="_blank" rel="noreferrer" className="hidden text-xs text-[#9af4e7] underline sm:inline short:hidden">Открыть запись</a>}
-        {role !== "host" && <Button variant="destructive" size="sm" title="Выйти" aria-label="Выйти" className={`rounded-xl ${railSize}`} onClick={() => { room.disconnect(); onLeave(); }}><PhoneOff size={16} /><span className="hidden sm:inline short:hidden">Выйти</span></Button>}
+        {role !== "host" && <Button variant="destructive" size="sm" title="Выйти" aria-label="Выйти" className={`h-10 rounded-full px-4 ${railSize}`} onClick={() => { room.disconnect(); onLeave(); }}><PhoneOff size={16} /><span className="hidden sm:inline short:hidden">Выйти</span></Button>}
       </div>
     </footer>}
   </main>;
