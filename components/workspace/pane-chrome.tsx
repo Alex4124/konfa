@@ -58,9 +58,9 @@ export function PageJump({ page, count, onJump, onStep }: { page: number; count:
     if (Number.isFinite(wanted)) onJump(Math.min(count, Math.max(1, wanted)) - 1);
   };
   return <div className="flex items-center" role="group" aria-label={`Страница ${page + 1} из ${count}`}>
-    <Button type="button" variant="ghost" size="icon-sm" title="Предыдущая страница" aria-label="Предыдущая страница" disabled={page <= 0} className={headerButton} onClick={() => onStep(-1)}><ChevronLeft /></Button>
+    <Button type="button" variant="ghost" size="icon-sm" title="Предыдущая страница" aria-label="Предыдущая страница" disabled={page <= 0} className={`${headerButton} @max-[240px]/pane:hidden`} onClick={() => onStep(-1)}><ChevronLeft /></Button>
     <input aria-label="Номер страницы" inputMode="numeric" value={draft ?? String(page + 1)} title="Введите номер страницы и нажмите Enter"
-      className="h-7 w-9 rounded-md border border-white/15 bg-[#0e192c] text-center text-xs tabular-nums text-white outline-none focus:border-[#6de7d4]"
+      className="h-7 w-9 rounded-md border border-white/15 bg-[#0e192c] text-center text-xs tabular-nums text-white outline-none focus:border-[#6de7d4] pointer-coarse:text-base"
       onFocus={(event) => { setDraft(String(page + 1)); event.currentTarget.select(); }}
       onChange={(event) => setDraft(event.target.value.replace(/\D/g, "").slice(0, 3))}
       onBlur={() => setDraft(null)}
@@ -70,7 +70,7 @@ export function PageJump({ page, count, onJump, onStep }: { page: number; count:
         event.stopPropagation();
       }} />
     <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300">/ {count}</span>
-    <Button type="button" variant="ghost" size="icon-sm" title="Следующая страница" aria-label="Следующая страница" disabled={page >= count - 1} className={headerButton} onClick={() => onStep(1)}><ChevronRight /></Button>
+    <Button type="button" variant="ghost" size="icon-sm" title="Следующая страница" aria-label="Следующая страница" disabled={page >= count - 1} className={`${headerButton} @max-[240px]/pane:hidden`} onClick={() => onStep(1)}><ChevronRight /></Button>
   </div>;
 }
 
@@ -86,11 +86,11 @@ type ShellProps = {
 
 export function PaneShell({ part, title, controls, highlight, onActivate, children, dropProps }: ShellProps) {
   return <section aria-label={PART_LABEL[part]} onPointerDownCapture={() => onActivate(part)} onFocusCapture={() => onActivate(part)} {...dropProps}
-    className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-[#14243a] transition-colors ${highlight ? "border-[#6de7d4]/55" : "border-white/10"}`}>
-    <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-white/10 pl-3 pr-1">
-      <PartIcon part={part} size={16} className="shrink-0 text-[#9af4e7]" />
-      <h2 className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>{title}</h2>
-      <div className="flex shrink-0 items-center gap-0.5">{controls}</div>
+    className={`@container/pane relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-[#14243a] transition-colors ${highlight ? "border-[#6de7d4]/55" : "border-white/10"}`}>
+    <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-white/10 pl-3 pr-1 @max-[200px]/pane:pl-1">
+      <PartIcon part={part} size={16} className="shrink-0 text-[#9af4e7] @max-[200px]/pane:hidden" />
+      <h2 className="min-w-0 flex-1 truncate text-sm font-medium @max-[200px]/pane:sr-only" title={title}>{title}</h2>
+      <div className="ml-auto flex shrink-0 items-center gap-0.5">{controls}</div>
     </header>
     <div className="relative min-h-0 flex-1 bg-[#0b1626]">{children}</div>
   </section>;

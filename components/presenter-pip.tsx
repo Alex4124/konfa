@@ -59,7 +59,7 @@ export function PresenterPip({ pipWindow, shareId, trackRef, surface, layer, not
   const toolbarVisible = ready && Boolean(layer.canDraw);
   // Most PiP windows are short; the column is used only when it leaves the larger frame (a portrait share). Compact until measured.
   const columnBetter = area.width > 0 && area.height > 0 && stripPlacement(area, aspect, { top: TOOLBAR_ROW_PX, left: TOOLBAR_COLUMN_PX }) === "left";
-  const layout = toolbarLayoutFor({ expanded: false, coarse, short: short && columnBetter, areaWidth: Math.max(1, area.width - ROW_MARGIN) });
+  const layout = toolbarLayoutFor({ expanded: false, coarse, short: short && columnBetter, areaWidth: Math.max(1, area.width - ROW_MARGIN), areaHeight: Math.max(1, area.height - ROW_MARGIN) });
   const column = layout.placement === "column";
   const hideVideo = monitor && !showVideo;
   const shownNotice = notice && notice.id !== hiddenNotice ? notice : null;
@@ -106,7 +106,7 @@ export function PresenterPip({ pipWindow, shareId, trackRef, surface, layer, not
         {monitor && bannerHidden && <Button type="button" variant="secondary" size="icon-sm" title={videoLabel} aria-label={videoLabel} className="absolute bottom-2 right-2 z-30 bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a]" onClick={() => setShowVideo(!showVideo)}>{showVideo ? <EyeOff /> : <Eye />}</Button>}
         <div role="status" aria-live="polite" className="pointer-events-none absolute inset-x-2 top-2 z-30 flex justify-center">{shownNotice && <span className="max-w-full rounded-lg border border-white/15 bg-[#1c2c45]/95 px-3 py-1.5 text-center text-xs text-white shadow-xl">{shownNotice.text}</span>}</div>
       </div>
-      {toolbarVisible && <div ref={setToolbar} className={column ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 py-1"} />}
+      {toolbarVisible && <div ref={setToolbar} className={column ? `order-first flex ${layout.columns === 2 ? "w-28" : "w-15"} shrink-0 flex-col items-center py-1` : "flex min-h-12 shrink-0 px-1 py-1"} />}
     </div>
   </div>, body);
 }

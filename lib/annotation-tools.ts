@@ -287,21 +287,42 @@ export function chipName(name: string | null | undefined, fallback = "Участ
 // Toolbar layout
 
 export type ToolbarPlacement = "row" | "overlay" | "column";
-export type ToolbarLayout = Readonly<{ placement: ToolbarPlacement; compact: boolean; orientation: "horizontal" | "vertical" }>;
+export type ToolbarButton = 36 | 40 | 44; // size-9, size-10, size-11
+export type ToolbarLayout = Readonly<{ placement: ToolbarPlacement; compact: boolean; orientation: "horizontal" | "vertical"; button: ToolbarButton; columns: 1 | 2 }>;
 
-const LAYOUTS = {
-  row: Object.freeze({ placement: "row", compact: false, orientation: "horizontal" }),
-  rowCompact: Object.freeze({ placement: "row", compact: true, orientation: "horizontal" }),
-  overlay: Object.freeze({ placement: "overlay", compact: false, orientation: "horizontal" }),
-  column: Object.freeze({ placement: "column", compact: true, orientation: "vertical" }),
-} satisfies Record<string, ToolbarLayout>;
+// The longest set, the compact one while drawing (components/annotations/annotation-toolbar): 7 buttons and a separator
+// (9 px with its margins), gap-1, p-1.5 and the border. Two columns: 4 rows and the separator row. Просмотр has fewer buttons
+// of the same size, so no button moves when the tool changes.
+const length = (columns: 1 | 2, button: number) => columns === 1 ? 7 * button + 51 : 4 * button + 39;
+const TOUCH: readonly ToolbarButton[] = [44, 40, 36];
+// A landscape phone has width to spare, not height: one column while a touch-sized button fits, then two.
+const COLUMNS: Readonly<Record<"coarse" | "fine", ReadonlyArray<readonly [1 | 2, ToolbarButton]>>> = {
+  coarse: [[1, 44], [1, 40], [2, 44], [2, 40], [2, 36]],
+  fine: [[1, 36], [2, 36]],
+};
 
-// short = hooks/use-short-layout of the window that hosts the toolbar (kept while the keyboard is up); areaWidth = px the toolbar may take
-// (its column minus the placement's margins), <= 0 (not measured yet) counts as wide.
-// Returns shared frozen objects, so equal inputs give the same reference.
-export function toolbarLayoutFor(input: { expanded: boolean; coarse: boolean; short: boolean; areaWidth: number }): ToolbarLayout {
-  if (input.short) return LAYOUTS.column;
-  const compact = input.coarse || (input.areaWidth > 0 && input.areaWidth < COMPACT_AREA_WIDTH);
-  if (compact) return LAYOUTS.rowCompact;
-  return input.expanded ? LAYOUTS.overlay : LAYOUTS.row;
+const layouts = new Map<string, ToolbarLayout>();
+function layoutOf(placement: ToolbarPlacement, compact: boolean, button: ToolbarButton, columns: 1 | 2): ToolbarLayout {
+  const key = `${placement}:${compact}:${button}:${columns}`;
+  let layout = layouts.get(key);
+  if (!layout) {
+    layout = Object.freeze({ placement, compact, orientation: placement === "column" ? "vertical" : "horizontal", button, columns });
+    layouts.set(key, layout);
+  }
+  return layout;
+}
+
+// short = hooks/use-short-layout of the window that hosts the toolbar (kept while the keyboard is up); areaWidth and areaHeight =
+// px the toolbar may take (its column minus the placement's margins), <= 0 or missing (not measured yet) counts as roomy.
+// Touch buttons are the largest that fit. Returns shared frozen objects, so equal inputs give the same reference.
+export function toolbarLayoutFor(input: { expanded: boolean; coarse: boolean; short: boolean; areaWidth: number; areaHeight?: number }): ToolbarLayout {
+  const room = (px?: number) => px !== undefined && px > 0 ? px : Infinity;
+  if (input.short) {
+    const choices = input.coarse ? COLUMNS.coarse : COLUMNS.fine, height = room(input.areaHeight);
+    const [columns, button] = choices.find(([c, b]) => length(c, b) <= height) ?? choices[choices.length - 1]; // the last one scrolls
+    return layoutOf("column", true, button, columns);
+  }
+  const width = room(input.areaWidth);
+  if (input.coarse || width < COMPACT_AREA_WIDTH) return layoutOf("row", true, input.coarse ? TOUCH.find((b) => length(1, b) <= width) ?? 36 : 36, 1);
+  return layoutOf(input.expanded ? "overlay" : "row", false, 36, 1);
 }

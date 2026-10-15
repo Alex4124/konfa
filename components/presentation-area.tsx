@@ -16,13 +16,14 @@ import { stripPlacement } from "@/lib/view-transform";
 import type { RoomState, UiTool } from "@/lib/confa-types";
 
 type Member = RoomState["members"][number];
-// Horizontal room the toolbar container leaves: px-1 in a row, max-w-[calc(100%-272px)] as the expanded overlay
-// (centred, it then clears the zoom controls in the frame's bottom-right corner, about 124 px with their inset).
+// Room the toolbar container leaves: px-1 in a row (py-1 in a column); the expanded overlay starts at left-3 and stops short
+// of the zoom controls in the frame's bottom-right corner (about 124 px with their inset) and a 12 px gap.
 const ROW_MARGIN = 8;
-const OVERLAY_MARGIN = 272;
-// Space the toolbar takes beside the frame (min-h-12 row with size-11 touch buttons, w-15 column), for the strip choice.
-const TOOLBAR_ROW_PX = 52;
-const TOOLBAR_COLUMN_PX = 60;
+const OVERLAY_MARGIN = 148;
+// Space the toolbar takes beside the frame, for the strip choice: a row is its buttons with p-1.5, the border and py-1; a
+// column is w-15, or w-28 with two (lib/annotation-tools toolbarLayoutFor).
+const rowPx = (button: number) => button + 22;
+const columnPx = (columns: 1 | 2) => columns === 2 ? 112 : 60;
 type Area = { width: number; height: number; vw: number; vh: number };
 // The top-right cluster over the share (RoomView passes its own buttons in the same look).
 export const clusterButton = "bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a] max-md:size-9 short:size-9";
@@ -49,7 +50,7 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   const [area, setArea] = useState<Area>({ width: 0, height: 0, vw: 0, vh: 0 });
   const [frameAspect, setFrameAspect] = useState(16 / 9);
   const [toolbarContainer, setToolbarContainer] = useState<HTMLDivElement | null>(null);
-  const [columnWidth, setColumnWidth] = useState(0);
+  const [columnSize, setColumnSize] = useState({ width: 0, height: 0 }); // the frame and the toolbar beside or under it
   const [clusterWidth, setClusterWidth] = useState(64); // the top-right buttons: the expanded participants panel stops short of them
   const [wasExpanded, setWasExpanded] = useState(expanded);
   const presentationRef = useRef<HTMLDivElement>(null);
@@ -68,20 +69,22 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
   const [uiTool] = useArmedTool(shareId ?? "", defaultToolFor({ armedByDefault: layerProps.armedByDefault ?? false, coarse, lastDrawTool: prefs.lastDrawTool }));
   const interaction = layerProps.canDraw && uiTool !== "view" ? "draw" : "view";
   // The toolbar's own column (without the participants strip), so the full toolbar never scrolls sideways.
-  const toolbarSpace = columnWidth > 0 ? Math.max(1, columnWidth - (expanded ? OVERLAY_MARGIN : ROW_MARGIN)) : 0;
-  const toolbarLayout = toolbarLayoutFor({ expanded, coarse, short, areaWidth: toolbarSpace });
+  const toolbarSpace = columnSize.width > 0 ? Math.max(1, columnSize.width - (expanded ? OVERLAY_MARGIN : ROW_MARGIN)) : 0;
+  const toolbarLayout = toolbarLayoutFor({ expanded, coarse, short, areaWidth: toolbarSpace, areaHeight: columnSize.height > 0 ? Math.max(1, columnSize.height - ROW_MARGIN) : 0 });
   const placement = toolbarLayout.placement;
   // The participants strip goes where it leaves the larger frame, at the size its tiles take there; the expanded overlay keeps width ≥ height.
-  const toolbarRow = toolbarVisible && placement === "row" ? TOOLBAR_ROW_PX : 0;
-  const toolbarColumn = toolbarVisible && placement === "column" ? TOOLBAR_COLUMN_PX : 0;
+  const toolbarRow = toolbarVisible && placement === "row" ? rowPx(toolbarLayout.button) : 0;
+  const toolbarColumn = toolbarVisible && placement === "column" ? columnPx(toolbarLayout.columns) : 0;
   const viewport = { width: area.vw, height: area.vh };
   const strips = { top: fitStrip(members.length, "top", cameraSize, area, viewport), left: fitStrip(members.length, "left", cameraSize, area, viewport) };
   const participantsOnTop = area.width <= 0 ? true : expanded ? area.width >= area.height : stripPlacement({ width: area.width - toolbarColumn, height: area.height - toolbarRow }, frameAspect, { top: strips.top.extent, left: strips.left.extent }) === "top";
   const strip = participantsOnTop ? strips.top : strips.left;
   const stripShown = !expanded && strip.extent > 0;
-  // The expanded participants panel starts right of the toolbar column (w-15 + 12 px), so it never covers the tools.
+  // The expanded participants panel starts right of the toolbar column (--beside: its width + 12 px), so it never covers the
+  // tools; in the left layout it stops above the overlay toolbar in the bottom-left corner.
   const besideColumn = toolbarVisible && placement === "column";
-  const overlayAt = besideColumn ? "left-18 top-[max(0.75rem,env(safe-area-inset-top))]" : "left-3 top-[max(0.75rem,env(safe-area-inset-top))]";
+  const underToolbar = toolbarVisible && placement === "overlay";
+  const overlayAt = besideColumn ? "left-(--beside) top-[max(0.75rem,env(safe-area-inset-top))]" : "left-3 top-[max(0.75rem,env(safe-area-inset-top))]";
 
   if (wasExpanded !== expanded) {
     setWasExpanded(expanded);
@@ -102,11 +105,13 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
     };
     const first = element.getBoundingClientRect();
     sizeArea(first.width, first.height);
-    setColumnWidth(Math.round(column.getBoundingClientRect().width));
+    const sizeColumn = (width: number, height: number) => setColumnSize((current) => current.width === Math.round(width) && current.height === Math.round(height) ? current : { width: Math.round(width), height: Math.round(height) });
+    const firstColumn = column.getBoundingClientRect();
+    sizeColumn(firstColumn.width, firstColumn.height);
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         if (entry.target === element) sizeArea(entry.contentRect.width, entry.contentRect.height);
-        else if (entry.target === column) setColumnWidth(Math.round(entry.contentRect.width));
+        else if (entry.target === column) sizeColumn(entry.contentRect.width, entry.contentRect.height);
         else setClusterWidth(Math.round(entry.contentRect.width));
       }
     });
@@ -179,7 +184,7 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
     updateOverlayNavigation();
   }
 
-  return <div ref={presentationRef} style={{ "--cluster": `${clusterWidth}px` } as CSSProperties} className={`group/presentation relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0e192c] ${participantsOnTop ? "flex-col" : "flex-row"}`}>
+  return <div ref={presentationRef} style={{ "--cluster": `${clusterWidth}px`, "--beside": `${columnPx(toolbarLayout.columns) + 12}px` } as CSSProperties} className={`group/presentation relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0e192c] ${participantsOnTop ? "flex-col" : "flex-row"}`}>
     {stripShown && <TileStrip members={members} renderTile={renderTile} placement={participantsOnTop ? "top" : "left"} strip={strip} />}
 
     <div ref={columnRef} className={`relative flex min-h-0 min-w-0 flex-1 ${placement === "column" ? "flex-row" : "flex-col"}`}>
@@ -190,8 +195,8 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
         {!expanded && !placeholder && <span className="pointer-events-none absolute left-3 top-3 max-w-[min(50%,calc(100%-var(--cluster)-36px))] truncate rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white short:hidden">{activeScreen.participant.name || "Демонстрация экрана"}</span>}
       </div>
       {toolbarVisible && <div ref={setToolbarContainer} className={placement === "overlay"
-        ? "absolute bottom-3 left-1/2 z-40 flex max-w-[calc(100%-272px)] -translate-x-1/2 justify-center"
-        : placement === "column" ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 py-1"} />}
+        ? "absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 z-40 flex max-w-[calc(100%-148px)]"
+        : placement === "column" ? `order-first flex ${toolbarLayout.columns === 2 ? "w-28" : "w-15"} shrink-0 flex-col items-center py-1` : `flex min-h-12 shrink-0 px-1 ${expanded ? "pt-1 pb-[max(0.25rem,env(safe-area-inset-bottom))]" : "py-1"}`} />}
     </div>
 
     <div ref={clusterRef} style={{ "--strip": `${stripShown && participantsOnTop ? strip.extent : 0}px` } as CSSProperties} className={`absolute right-3 z-40 flex items-center gap-2 ${expanded ? "top-[max(0.75rem,env(safe-area-inset-top))]" : "top-[calc(var(--strip)+12px)] short:top-3"}`}>
@@ -201,8 +206,8 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
     </div>
 
     {expanded && <div className={`absolute z-30 flex min-h-0 flex-col overflow-hidden rounded-xl border border-white/15 bg-[#14243a]/90 shadow-2xl backdrop-blur-md ${participantsOnTop
-      ? overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} w-fit max-h-[min(50dvh,440px)] ${besideColumn ? "max-w-[calc(100%-var(--cluster)-96px)]" : "max-w-[calc(100%-var(--cluster)-36px)]"}` : `${overlayAt} max-h-[min(50dvh,440px)] ${besideColumn ? "w-[min(360px,calc(100%-var(--cluster)-96px))]" : "w-[min(360px,calc(100%-var(--cluster)-36px))]"}`
-      : overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} h-fit max-h-[calc(100%-24px)] w-[clamp(110px,16vw,180px)]` : `${overlayAt} bottom-3 ${besideColumn ? "w-[min(340px,calc(100%-136px))]" : "w-[min(340px,75vw)]"}`}`}>
+      ? overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} w-fit max-h-[min(50dvh,440px)] ${besideColumn ? "max-w-[calc(100%-var(--cluster)-var(--beside)-24px)]" : "max-w-[calc(100%-var(--cluster)-36px)]"}` : `${overlayAt} max-h-[min(50dvh,440px)] ${besideColumn ? "w-[min(360px,calc(100%-var(--cluster)-var(--beside)-24px))]" : "w-[min(360px,calc(100%-var(--cluster)-36px))]"}`
+      : overlayCollapsed ? overlayAt : overlayView === "tiles" ? `${overlayAt} h-fit ${underToolbar ? "max-h-[calc(100%-88px)]" : "max-h-[calc(100%-24px)]"} w-[clamp(110px,16vw,180px)]` : `${overlayAt} ${underToolbar ? "bottom-19" : "bottom-3"} ${besideColumn ? "w-[min(340px,calc(100%-var(--beside)-64px))]" : "w-[min(340px,75vw)]"}`}`}>
       <div className="flex shrink-0 items-center justify-between gap-1 p-1.5">
         {overlayCollapsed ? <Button variant="ghost" size="sm" aria-label="Развернуть панель участников" aria-expanded={false} className="text-white hover:bg-white/10 hover:text-white" onClick={() => setOverlayCollapsed(false)}><Users size={16} />{members.length}{participantsOnTop ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</Button> : <>
           <span className="min-w-0 truncate px-1 text-xs text-slate-200">{members.length}</span>

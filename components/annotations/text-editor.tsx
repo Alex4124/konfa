@@ -56,6 +56,7 @@ function rgba(hex: string, alpha: number): string {
 // A formula is typed as its source; the row below shows the mark it becomes and the signs the keyboard lacks.
 export function TextEditor({ editorRef, state, box, coarse, scale = 1, onChange, onCommit, onCancel }: Props) {
   const actionsRef = useRef<HTMLDivElement>(null);
+  const signsRef = useRef<HTMLDivElement>(null);
   const caretRef = useRef<number | null>(null); // where a sign button left the caret, applied once the text has changed
   const chem = Boolean(state?.chem);
   const px = state ? unitsToFontPx(state.fontSize, box.height) : MIN_FONT_PX;
@@ -99,14 +100,20 @@ export function TextEditor({ editorRef, state, box, coarse, scale = 1, onChange,
     }
     const actions = actionsRef.current;
     if (!actions) return;
+    const view = actions.closest(".group\\/screen")?.getBoundingClientRect(); // the zoom frame's window
+    const edge = element.getBoundingClientRect(), tileLeft = edge.left - left * zoom;
+    // The signs wrap inside the part of the tile on screen: a narrow pane or a zoomed frame cut the row off.
+    const signs = signsRef.current;
+    if (signs) signs.style.maxWidth = `min(92vw, 31rem, ${Math.max(120, Math.floor(Math.min(box.width * zoom, view?.width ?? Infinity) - 8))}px)`;
     const below = top + height * k + ACTIONS_GAP;
     const own = actions.offsetHeight * unscale;
-    const view = actions.closest(".group\\/screen")?.getBoundingClientRect(); // the zoom frame's window
-    const edge = element.getBoundingClientRect(), reach = actions.offsetHeight + ACTIONS_GAP;
+    const reach = actions.offsetHeight + ACTIONS_GAP;
     const cut = view !== undefined && edge.bottom + reach > view.bottom && edge.top - reach >= view.top;
     actions.style.top = `${below + own <= box.height && !cut ? below : Math.max(0, top - own - ACTIONS_GAP)}px`;
-    actions.style.left = `${Math.max(0, Math.min(left, box.width - actions.offsetWidth * unscale))}px`;
-  }, [editorRef, open, text, editorFont, cssWidth, k, top, left, box, unscale, showActions, preview]);
+    // Sideways too, within the tile's part on screen (tile coordinates).
+    const from = view ? Math.max(0, (view.left - tileLeft) / zoom) : 0, to = view ? Math.min(box.width, (view.right - tileLeft) / zoom) : box.width;
+    actions.style.left = `${Math.max(from, Math.min(left, to - actions.offsetWidth * unscale))}px`;
+  }, [editorRef, open, text, editorFont, cssWidth, k, top, left, box, zoom, unscale, showActions, preview]);
 
   // Fallback for openings outside a click (the click handler focuses synchronously).
   const key = state?.key;
@@ -190,7 +197,7 @@ export function TextEditor({ editorRef, state, box, coarse, scale = 1, onChange,
     {/* data-text-editor: a press here is part of the editing, the workspace does not save the text on it. */}
     {showActions && <div ref={actionsRef} data-gesture-ignore data-text-editor className="absolute z-20 flex flex-col items-start gap-1.5 text-base" style={{ left, top, transform: unscale === 1 ? undefined : `scale(${unscale})`, transformOrigin: "0 0" }} onPointerDown={keepFocus} onMouseDown={keepFocus}>
       {preview && <svg aria-hidden width={preview.width} height={preview.height} viewBox={`0 0 ${preview.width} ${preview.height}`} className="block max-w-none rounded-md shadow-lg ring-1 ring-[#6de7d4]/70"><TextMark data={preview.data} box={preview.view} /></svg>}
-      {chem && <div className="flex max-w-[min(92vw,31rem)] flex-wrap gap-1">
+      {chem && <div ref={signsRef} className="flex max-w-[min(92vw,31rem)] flex-wrap gap-1">
         {FORMULA_SIGNS.map((sign) => <button key={sign.title} type="button" title={sign.title} aria-label={sign.title} className={`grid place-items-center rounded-lg bg-[#1c2c45] px-1.5 text-base font-semibold text-white shadow-lg hover:bg-[#2a3f61] ${coarse ? "h-10 min-w-10" : "h-8 min-w-8"}`} onClick={() => typeSign(sign)}>{sign.label}</button>)}
       </div>}
       {(coarse || counter) && <div className="flex items-center gap-1.5">

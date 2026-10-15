@@ -67,7 +67,7 @@ function MaterialsMenu({ view, host, busy, onPick }: { view: WorkspaceView; host
   const run = (action: () => void) => { setOpen(false); action(); };
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" title="Материалы урока" className={headerButton}><FolderOpen /><span className="max-lg:hidden">Материалы</span></Button></PopoverTrigger>
-    <PopoverContent align="end" collisionPadding={8} className="w-72 border-white/15 bg-[#1c2c45] p-1.5 text-white">
+    <PopoverContent align="end" collisionPadding={8} className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto border-white/15 bg-[#1c2c45] p-1.5 text-white">
       <button type="button" disabled={busy} className={menuItem} onClick={() => run(onPick)}><Upload size={16} />Загрузить файл…</button>
       {documents.length > 0 && <p className="px-2.5 pb-1 pt-2 text-xs uppercase tracking-[.12em] text-slate-400">Загруженные</p>}
       {documents.map((item) => <div key={item.id} className="flex items-center gap-1">
@@ -151,10 +151,10 @@ export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, 
       tile={(index, slot) => <>
         <PageImage roomId={roomId} doc={doc} page={index} />
         <SurfaceLayer hub={layer.hub} id={docSurface(doc.id, index)} slot={slot} selfId={layer.selfId} canDraw={layer.canDraw} canModerate={layer.canModerate} armedByDefault={layer.armedByDefault} coarse={layer.coarse} sharingScreen={layer.sharingScreen} toolKey={drawing.toolKey} color={drawing.color} label={`Пометки на странице ${index + 1}`} onEditing={(style) => onEditing("doc", style)} />
-      </>} /> : host && <div className="flex h-full flex-col items-center justify-center gap-3 overflow-y-auto p-6 text-center">
-      <span className="grid size-12 shrink-0 place-items-center rounded-full bg-[#6de7d4]/15 text-[#9af4e7]"><Upload size={22} /></span>
+      </>} /> : host && <div className="flex h-full flex-col items-center justify-center-safe gap-3 overflow-y-auto p-4 text-center sm:p-6 short:gap-2 short:p-3">
+      <span className="grid size-12 shrink-0 place-items-center rounded-full bg-[#6de7d4]/15 text-[#9af4e7] max-sm:hidden short:hidden [@media(max-height:640px)]:hidden"><Upload size={22} /></span>
       <p className="text-sm font-medium">Перетащите сюда PDF, PowerPoint, Word или картинку</p>
-      <p className="max-w-xs text-xs leading-relaxed text-slate-400">До 100 страниц. Вы прокручиваете материал — ученики видят то же место и могут приближать его.</p>
+      <p className="max-w-xs text-xs leading-relaxed text-slate-400 max-sm:hidden short:hidden [@media(max-height:640px)]:hidden">До 100 страниц. Вы прокручиваете материал — ученики видят то же место и могут приближать его.</p>
       <Button type="button" disabled={Boolean(upload)} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]" onClick={pick}>Выбрать файл</Button>
       {(view.documents?.length ?? 0) > 0 && <p className="text-xs text-slate-400">Или откройте загруженный в меню «Материалы»</p>}
     </div>}

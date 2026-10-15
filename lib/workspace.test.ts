@@ -238,6 +238,20 @@ describe("layout and stage", () => {
     assert.equal(workspaceLayout({ ...base, width: 0, height: 0 }).orientation, "row");
   });
 
+  it("near the line the parts keep their side", () => {
+    const near = { ...base, width: 1100, height: 1000 };
+    assert.equal(workspaceLayout(near).orientation, "column");
+    assert.equal(workspaceLayout({ ...near, previous: "row" }).orientation, "row");
+    assert.equal(workspaceLayout({ ...near, width: 1200, previous: "column" }).orientation, "column");
+    assert.equal(workspaceLayout({ ...near, width: 1260, previous: "column" }).orientation, "row");
+    assert.equal(workspaceLayout({ ...near, width: 1040, previous: "row" }).orientation, "column");
+    assert.equal(workspaceLayout({ ...near, width: 0, height: 0, previous: "column" }).orientation, "column", "unmeasured keeps it");
+    for (const width of [900, 1040, 1100, 1200, 1260, 1400]) {
+      const once = workspaceLayout({ ...near, width }).orientation;
+      assert.equal(workspaceLayout({ ...near, width, previous: once }).orientation, once, `settled at ${width}`);
+    }
+  });
+
   it("collapsed parts become rails; both collapsed shows the camera grid", () => {
     assert.deepEqual(workspaceLayout({ ...base, boardCollapsed: true }), { orientation: "row", board: "rail", doc: "pane", grid: false });
     assert.deepEqual(workspaceLayout({ ...base, boardCollapsed: true, docCollapsed: true }), { orientation: "row", board: "rail", doc: "rail", grid: true });

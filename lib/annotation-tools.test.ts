@@ -328,27 +328,47 @@ describe("author chips", () => {
 describe("toolbarLayoutFor", () => {
   const layout = (expanded: boolean, coarse: boolean, short: boolean, areaWidth: number) => toolbarLayoutFor({ expanded, coarse, short, areaWidth });
 
+  const column = (coarse: boolean, areaHeight?: number) => toolbarLayoutFor({ expanded: false, coarse, short: true, areaWidth: 844, areaHeight });
+  const size = (value: { button: number; columns: number }) => `${value.columns}x${value.button}`;
+
   it("desktop: row normally, overlay when expanded", () => {
-    assert.deepEqual(layout(false, false, false, 1200), { placement: "row", compact: false, orientation: "horizontal" });
-    assert.deepEqual(layout(true, false, false, 1200), { placement: "overlay", compact: false, orientation: "horizontal" });
+    assert.deepEqual(layout(false, false, false, 1200), { placement: "row", compact: false, orientation: "horizontal", button: 36, columns: 1 });
+    assert.deepEqual(layout(true, false, false, 1200), { placement: "overlay", compact: false, orientation: "horizontal", button: 36, columns: 1 });
   });
 
   it("narrow or coarse: compact row, also when expanded", () => {
     for (const expanded of [true, false]) {
-      assert.deepEqual(layout(expanded, false, false, COMPACT_AREA_WIDTH - 1), { placement: "row", compact: true, orientation: "horizontal" });
-      assert.deepEqual(layout(expanded, true, false, 1600), { placement: "row", compact: true, orientation: "horizontal" });
+      assert.deepEqual(layout(expanded, false, false, COMPACT_AREA_WIDTH - 1), { placement: "row", compact: true, orientation: "horizontal", button: 36, columns: 1 });
+      assert.deepEqual(layout(expanded, true, false, 1600), { placement: "row", compact: true, orientation: "horizontal", button: 44, columns: 1 });
     }
     assert.equal(layout(true, false, false, COMPACT_AREA_WIDTH).placement, "overlay");
   });
 
-  it("short viewport (phone landscape): compact vertical column", () => {
+  it("a touch row takes the largest buttons that fit the width", () => {
+    assert.equal(layout(false, true, false, 359).button, 44);
+    assert.equal(layout(false, true, false, 358).button, 40, "a 360 px phone (352 px for the row)");
+    assert.equal(layout(false, true, false, 331).button, 40);
+    assert.equal(layout(false, true, false, 312).button, 36, "a 320 px phone");
+    assert.equal(layout(false, true, false, 200).button, 36, "nothing smaller: the row scrolls");
+    assert.equal(layout(false, false, false, 600).button, 36, "a mouse keeps 36 px");
+  });
+
+  it("short viewport (phone landscape): a vertical column, two when one does not fit", () => {
     for (const expanded of [true, false]) {
-      for (const coarse of [true, false]) assert.deepEqual(layout(expanded, coarse, true, 844), { placement: "column", compact: true, orientation: "vertical" });
+      for (const coarse of [true, false]) assert.deepEqual(toolbarLayoutFor({ expanded, coarse, short: true, areaWidth: 844 }), { placement: "column", compact: true, orientation: "vertical", button: coarse ? 44 : 36, columns: 1 });
     }
+    assert.equal(size(column(true, 400)), "1x44");
+    assert.equal(size(column(true, 340)), "1x40");
+    assert.equal(size(column(true, 300)), "2x44");
+    assert.equal(size(column(true, 205)), "2x40");
+    assert.equal(size(column(true, 100)), "2x36", "nothing smaller: the column scrolls");
+    assert.equal(size(column(false, 303)), "1x36");
+    assert.equal(size(column(false, 250)), "2x36");
+    assert.equal(size(column(true, 0)), "1x44", "unmeasured");
   });
 
   it("an unmeasured area counts as wide", () => {
-    assert.deepEqual(layout(false, false, false, 0), { placement: "row", compact: false, orientation: "horizontal" });
+    assert.deepEqual(layout(false, false, false, 0), { placement: "row", compact: false, orientation: "horizontal", button: 36, columns: 1 });
     assert.equal(layout(false, false, false, Number.NaN).compact, false);
   });
 

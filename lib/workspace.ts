@@ -227,8 +227,12 @@ export function mergeWorkspace(server: WorkspaceView | null | undefined, pending
 // Layout and stage
 
 // Side by side when the area is clearly wider than tall; a collapsed part becomes a rail; students never see an empty material.
-export function workspaceLayout(input: { width: number; height: number; boardCollapsed: boolean; docCollapsed: boolean; hasDoc: boolean; isHost: boolean }): WorkspaceLayout {
-  const orientation = input.width <= 0 || input.height <= 0 || input.width >= input.height * 1.15 ? "row" : "column";
+// Near the line the parts keep their side (previous): the camera strip or the toolbar coming and going changes the height by a
+// few percent and must not flip them back and forth (an upright iPad sits right at it).
+const ROW_RATIO = 1.15, ROW_LEAVE = 1.05, ROW_ENTER = 1.25;
+export function workspaceLayout(input: { width: number; height: number; boardCollapsed: boolean; docCollapsed: boolean; hasDoc: boolean; isHost: boolean; previous?: WorkspaceLayout["orientation"] }): WorkspaceLayout {
+  const line = input.previous === "row" ? ROW_LEAVE : input.previous === "column" ? ROW_ENTER : ROW_RATIO;
+  const orientation = !(input.width > 0 && input.height > 0) ? input.previous ?? "row" : input.width >= input.height * line ? "row" : "column";
   const board: PaneMode = input.boardCollapsed ? "rail" : "pane";
   const doc: PaneMode = !input.hasDoc && !input.isHost ? "hidden" : input.docCollapsed ? "rail" : "pane";
   return { orientation, board, doc, grid: board !== "pane" && doc !== "pane" };
