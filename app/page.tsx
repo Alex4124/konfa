@@ -54,19 +54,19 @@ export default function Home() {
   }
 
   return (
-    <main className="home-shell min-h-screen text-white">
+    <main className="home-shell min-h-dvh text-white">
       <header className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-7 lg:px-12">
         <div className="flex items-center gap-3" aria-label="Конфа"><span className="brand-mark"><Video size={21} strokeWidth={2.5} /></span><span className="text-xl font-bold tracking-tight">конфа<span className="text-[#6de7d4]">.</span></span></div>
-        <div className="flex items-center gap-3"><span className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 lg:inline-flex">Встречи и вебинары до 50 человек</span><a href={accountName ? "/dashboard" : "/account"} className="rounded-xl border border-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/10">{accountName ? "Личный кабинет" : "Войти"}</a></div>
+        <div className="flex items-center gap-3"><span className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-300 lg:inline-flex">Встречи и вебинары до 50 человек</span><a href={accountName ? "/dashboard" : "/account"} className="inline-grid rounded-xl border border-white/20 px-4 py-2 text-center text-sm font-medium text-white hover:bg-white/10"><span aria-hidden className="invisible col-start-1 row-start-1">Личный кабинет</span><span className="col-start-1 row-start-1">{accountName ? "Личный кабинет" : "Войти"}</span></a></div>
       </header>
-      <div className="mx-auto grid max-w-7xl gap-10 px-6 pb-16 pt-10 xl:min-h-[calc(100vh-108px)] xl:grid-cols-[minmax(0,1fr)_minmax(400px,.9fr)] xl:items-center xl:gap-16 xl:px-12 xl:pb-28 xl:pt-0">
+      <div className="mx-auto grid max-w-7xl gap-10 px-6 pb-16 pt-10 xl:min-h-[calc(100dvh-108px)] xl:grid-cols-[minmax(0,1fr)_minmax(400px,.9fr)] xl:items-center xl:gap-16 xl:px-12 xl:pb-28 xl:pt-0">
         <section className="min-w-0 max-w-2xl">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#6de7d4]/30 bg-[#6de7d4]/10 px-3 py-1.5 text-sm font-medium text-[#8ff4e4]"><span className="h-1.5 w-1.5 rounded-full bg-[#6de7d4]" />Пространство для разговора</div>
-          <h1 className="max-w-xl text-[clamp(2.65rem,6vw,5rem)] font-semibold leading-[1.02] tracking-[-.055em]">Встречайтесь.<br /><span className="text-[#6de7d4]">Общайтесь.</span><br />Вместе.</h1>
+          <h1 className="max-w-xl text-[clamp(2.25rem,6vw,5rem)] font-semibold leading-[1.02] tracking-[-.055em]">Встречайтесь.<br /><span className="text-[#6de7d4]">Общайтесь.</span><br />Вместе.</h1>
           <p className="mt-7 max-w-lg text-lg leading-relaxed text-slate-300">Видеосвязь, вебинары и живые пометки прямо поверх общего экрана. Создайте комнату и пригласите людей по ссылке.</p>
           <div className="mt-10 flex flex-wrap gap-3">
-            <Button className="h-13 rounded-xl bg-[#6de7d4] px-6 text-base font-semibold text-[#10243a] hover:bg-[#96f5e7]" disabled={busy !== null} onClick={() => createRoom("meeting")}><Video />{busy === "meeting" ? "Создаём…" : "Новая встреча"}</Button>
-            <Button variant="outline" className="h-13 rounded-xl border-white/20 bg-white/5 px-6 text-base text-white hover:bg-white/10 hover:text-white" disabled={busy !== null} onClick={() => createRoom("webinar")}><Users />{busy === "webinar" ? "Создаём…" : "Новый вебинар"}</Button>
+            <Button className="h-13 rounded-xl bg-[#6de7d4] px-6 text-base has-[>svg]:px-6 font-semibold text-[#10243a] hover:bg-[#96f5e7]" disabled={busy !== null} onClick={() => createRoom("meeting")}><Video />{busy === "meeting" ? "Создаём…" : "Новая встреча"}</Button>
+            <Button variant="outline" className="h-13 rounded-xl border-white/20 bg-white/5 px-6 text-base has-[>svg]:px-6 text-white hover:bg-white/10 hover:text-white" disabled={busy !== null} onClick={() => createRoom("webinar")}><Users />{busy === "webinar" ? "Создаём…" : "Новый вебинар"}</Button>
           </div>
           {error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}
           <p className="mt-5 text-sm text-slate-400">Участникам не нужна регистрация</p>

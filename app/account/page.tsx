@@ -32,18 +32,22 @@ export default function AccountPage() {
   }
 
   return <main className="min-h-dvh bg-[#0e192c] px-5 py-7 text-white">
-    <div className="mx-auto max-w-5xl"><a href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</a></div>
-    <div className="mx-auto mt-12 grid max-w-5xl gap-10 lg:grid-cols-[1fr_430px] lg:items-center">
+    <div className="mx-auto max-w-5xl">
+      {/* A full page load, like the app's other internal links (c4df779). */}
+      {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+      <a href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</a>
+    </div>
+    <div className="mx-auto mt-8 grid max-w-5xl gap-8 sm:mt-12 sm:gap-10 lg:grid-cols-[1fr_430px] lg:items-start lg:pt-8">
       <section className="max-w-lg">
-        <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#6de7d4] text-[#10243a]"><CalendarDays size={27} /></div>
-        <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Планируйте встречи<br /><span className="text-[#6de7d4]">в своём ритме.</span></h1>
-        <p className="mt-5 text-lg leading-relaxed text-slate-300">Создавайте расписание встреч и вебинаров, выбирайте дни повторения и делитесь одной ссылкой на всю серию.</p>
+        <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#6de7d4] text-[#10243a] max-sm:hidden"><CalendarDays size={27} /></div>
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">Планируйте встречи<br /><span className="text-[#6de7d4]">в своём ритме.</span></h1>
+        <p className="mt-4 text-base leading-relaxed text-slate-300 sm:mt-5 sm:text-lg">Создавайте расписание встреч и вебинаров, выбирайте дни повторения и делитесь одной ссылкой на всю серию.</p>
         <p className="mt-7 flex items-center gap-2 text-sm text-slate-400"><Video size={17} /> Для обычной конференции аккаунт не нужен.</p>
       </section>
-      <section className="rounded-[28px] border border-white/10 bg-[#17263e] p-6 shadow-2xl sm:p-8">
+      <section className="w-full max-w-lg rounded-[28px] border border-white/10 bg-[#17263e] p-5 shadow-2xl sm:p-8 lg:max-w-none">
         <div className="mb-6 flex rounded-xl bg-[#0e192c] p-1" role="tablist" aria-label="Вход или регистрация">
-          <button type="button" role="tab" aria-selected={mode === "login"} className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium ${mode === "login" ? "bg-[#2d415d] text-white" : "text-slate-400"}`} onClick={() => { setMode("login"); setError(""); }}>Войти</button>
-          <button type="button" role="tab" aria-selected={mode === "register"} className={`flex-1 rounded-lg px-3 py-2.5 text-sm font-medium ${mode === "register" ? "bg-[#2d415d] text-white" : "text-slate-400"}`} onClick={() => { setMode("register"); setError(""); }}>Создать аккаунт</button>
+          <button type="button" role="tab" aria-selected={mode === "login"} className={`flex-auto whitespace-nowrap rounded-lg px-3 py-2.5 text-sm font-medium ${mode === "login" ? "bg-[#2d415d] text-white" : "text-slate-400"}`} onClick={() => { setMode("login"); setError(""); }}>Войти</button>
+          <button type="button" role="tab" aria-selected={mode === "register"} className={`flex-auto whitespace-nowrap rounded-lg px-3 py-2.5 text-sm font-medium ${mode === "register" ? "bg-[#2d415d] text-white" : "text-slate-400"}`} onClick={() => { setMode("register"); setError(""); }}>Создать аккаунт</button>
         </div>
         <h2 className="text-2xl font-semibold">{mode === "login" ? "С возвращением" : "Ваш аккаунт"}</h2>
         <form className="mt-6 space-y-4" onSubmit={(event) => void submit(event)}>
