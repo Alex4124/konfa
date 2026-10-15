@@ -8,6 +8,7 @@ import { ArrowLeft, Camera, CameraOff, Mic, MicOff, SwitchCamera, Video, Users, 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { RoomView } from "@/components/room-view";
+import { primeTextFont } from "@/components/annotations/text-measure";
 import { BackgroundPicker, type VideoBackground } from "@/components/background-picker";
 import { createStableBackgroundProcessor } from "@/lib/stable-background";
 import { DEFAULT_FACING, flipLabel, oppositeFacing, type Facing } from "@/lib/camera-facing";
@@ -53,6 +54,7 @@ export default function RoomPage() {
   const canFlip = coarse && camera && cameraCount >= 2;
 
   useEffect(() => () => { backgroundUrls.current.forEach((url) => URL.revokeObjectURL(url)); }, []);
+  useEffect(() => primeTextFont(), []); // the marks' font loads while the member types their name
 
   function changeBackground(next: VideoBackground | null) {
     if (next) backgroundUrls.current.push(next.url);

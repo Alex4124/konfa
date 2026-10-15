@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { Check, X } from "lucide-react";
 import { TextMark } from "@/components/annotations/text-mark";
-import { getMeasureEm } from "@/components/annotations/text-measure";
+import { useTextMeasure } from "@/components/annotations/text-measure";
 import { fontPx as unitsToFontPx, TEXT_FONT, type Size } from "@/lib/annotation-geometry";
 import { plateFor, TEXT_LINE_HEIGHT, TEXT_MAX_CHARS, TEXT_PAD_X, TEXT_PAD_Y, TEXT_PLATE_RADIUS_EM, TEXT_WEIGHT, textMetrics } from "@/lib/annotation-text";
 import { formulaMetrics } from "@/lib/chem-formula";
@@ -62,7 +62,8 @@ export function TextEditor({ editorRef, state, box, coarse, scale = 1, onChange,
   const px = state ? unitsToFontPx(state.fontSize, box.height) : MIN_FONT_PX;
   const editorFont = Math.max(MIN_FONT_PX, px);
   const k = px > 0 ? px / editorFont : 1;
-  const metrics = useMemo(() => state ? (state.chem ? formulaMetrics : textMetrics)({ text: state.text, fontSize: state.fontSize, maxWidth: state.maxWidth, box, measure: getMeasureEm() }) : null, [state, box]);
+  const measure = useTextMeasure();
+  const metrics = useMemo(() => state ? (state.chem ? formulaMetrics : textMetrics)({ text: state.text, fontSize: state.fontSize, maxWidth: state.maxWidth, box, measure }) : null, [state, box, measure]);
   const left = state ? state.point[0] * box.width : 0;
   const top = state && metrics ? Math.max(0, Math.min(state.point[1] * box.height, box.height - metrics.h * box.height)) : 0;
   const cssWidth = state ? state.maxWidth * box.width / k : 1;
