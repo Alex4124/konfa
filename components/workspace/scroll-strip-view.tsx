@@ -294,11 +294,12 @@ export function ScrollStripView({ layout, pixelWidth, resetKey, fitAspect, host,
       {placeholder && layout.tops.map((top, index) => mounted.includes(index) ? null : <FrameTile key={`blank-${index}`} top={top} aspect={1 / layout.heights[index]}>{placeholder(index)}</FrameTile>)}
       {mounted.map((index) => layout.tops[index] === undefined ? null : <FrameTile key={index} top={layout.tops[index]} aspect={1 / layout.heights[index]}>{tile(index, tiles.slot(index))}</FrameTile>)}
     </ZoomFrame>
-    <div ref={trackRef} className={`absolute bottom-1.5 right-1 top-1.5 z-20 w-2.5 ${host ? "cursor-pointer touch-none" : "pointer-events-none"}`} style={{ visibility: "hidden" }}
+    {/* While a tool draws only the thumb takes the pointer: a stroke at the right edge of the paper is drawn, not a jump. */}
+    <div ref={trackRef} className={`absolute bottom-1.5 right-1 top-1.5 z-20 w-2.5 ${host ? interaction === "draw" ? "pointer-events-none touch-none" : "cursor-pointer touch-none" : "pointer-events-none"}`} style={{ visibility: "hidden" }}
       onPointerDown={host ? (event) => { event.currentTarget.setPointerCapture(event.pointerId); dragTo(event); } : undefined}
       onPointerMove={host ? (event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) dragTo(event); } : undefined}
       onPointerUp={host ? () => setDragLabel(null) : undefined} onPointerCancel={host ? () => setDragLabel(null) : undefined}>
-      <div ref={thumbRef} className={`absolute inset-x-0 top-0 rounded-full ${host ? "bg-slate-500/70 hover:bg-slate-400/80" : "bg-slate-500/45"}`}>
+      <div ref={thumbRef} className={`absolute inset-x-0 top-0 rounded-full ${host ? `bg-slate-500/70 hover:bg-slate-400/80 ${interaction === "draw" ? "pointer-events-auto cursor-pointer" : ""}` : "bg-slate-500/45"}`}>
         {dragLabel && <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-[#0e192c] px-2 py-1 text-xs text-white shadow-xl">{dragLabel}</span>}
       </div>
     </div>

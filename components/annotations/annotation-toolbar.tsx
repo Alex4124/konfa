@@ -39,7 +39,7 @@ const ICONS: Record<ToolIconName, LucideIcon> = { Eye, WandSparkles, Pen, Highli
 const HOTKEY_TOOLS = (Object.keys(TOOL_META) as UiTool[]).filter((tool) => tool !== "view" && TOOL_META[tool].key);
 const activeClass = "bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7] hover:text-[#10243a]";
 const inactiveClass = "text-white hover:bg-white/10 hover:text-white";
-const popoverClass = "border-white/15 bg-[#1c2c45] p-1.5 text-white";
+const popoverClass = "max-h-(--radix-popover-content-available-height) overflow-y-auto border-white/15 bg-[#1c2c45] p-1.5 text-white";
 const menuItemClass = "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none hover:bg-white/10 focus-visible:bg-white/10 disabled:pointer-events-none disabled:opacity-40";
 const keepFocus = (event: SyntheticEvent) => event.preventDefault();
 
@@ -61,7 +61,8 @@ export function AnnotationToolbar(p: Props) {
   const { tool, prefs, layout, coarse } = p;
   const vertical = layout.orientation === "vertical";
   const side = vertical ? "right" : "top";
-  const sizeClass = layout.compact && coarse ? "size-11" : "";
+  const pair = layout.columns === 2; // a landscape phone too short for one column
+  const sizeClass = layout.button === 44 ? "size-11" : layout.button === 40 ? "size-10" : ""; // lib/annotation-tools toolbarLayoutFor
   const drawMode = tool !== "view" && tool !== "laser";
   const markKind = markKindOf(tool);
   const styleTool = p.textStyle ? "text" : markKind ?? prefs.lastDrawTool;
@@ -79,7 +80,7 @@ export function AnnotationToolbar(p: Props) {
   // The text editor keeps focus while popovers open and close.
   const contentProps = { container: p.portalContainer, side, collisionPadding: 8, onOpenAutoFocus: (event: Event) => { if (p.editingText) event.preventDefault(); }, onCloseAutoFocus: (event: Event) => { if (p.editingText) event.preventDefault(); } } as const;
   const choose = (next: UiTool) => { p.onTool(next); p.onOpenPicker(null); };
-  const separator = (key: string) => <span key={key} aria-hidden className={vertical ? "my-1 h-px w-6 shrink-0 bg-white/20" : "mx-1 h-6 w-px shrink-0 bg-white/20"} />;
+  const separator = (key: string) => <span key={key} aria-hidden className={pair ? "col-span-2 my-1 h-px w-full bg-white/20" : vertical ? "my-1 h-px w-6 shrink-0 bg-white/20" : "mx-1 h-6 w-px shrink-0 bg-white/20"} />;
 
   const toolButton = (next: UiTool, active = tool === next, label = TOOL_META[next].label) => <Button key={next} type="button" variant="ghost" size="icon" title={toolTitle(next)} aria-label={label} aria-pressed={active} aria-keyshortcuts={toolShortcut(next)} className={`${sizeClass} ${active ? activeClass : inactiveClass}`} onClick={() => choose(next)}><ToolIcon tool={next} /></Button>;
 
@@ -129,16 +130,16 @@ export function AnnotationToolbar(p: Props) {
     </PopoverContent>
   </Popover>;
 
-  const swatches = (close: boolean) => <div className="grid grid-cols-6 gap-2">{PALETTE.map((choice) => <button key={choice.value} type="button" title={choice.label} aria-label={choice.label} aria-pressed={color === choice.value} className={`size-8 rounded-full border-2 outline-none focus-visible:ring-2 focus-visible:ring-[#6de7d4] ${color === choice.value ? "border-white" : "border-white/30"}`} style={{ backgroundColor: choice.value }} onClick={() => { p.onPrefs({ color: choice.value }); if (close) p.onOpenPicker(null); }} />)}</div>;
+  const swatches = (close: boolean) => <div className="mx-auto grid w-fit grid-cols-3 gap-2">{PALETTE.map((choice) => <button key={choice.value} type="button" title={choice.label} aria-label={choice.label} aria-pressed={color === choice.value} className={`size-8 rounded-full border-2 outline-none focus-visible:ring-2 focus-visible:ring-[#6de7d4] ${color === choice.value ? "border-white" : "border-white/30"}`} style={{ backgroundColor: choice.value }} onClick={() => { p.onPrefs({ color: choice.value }); if (close) p.onOpenPicker(null); }} />)}</div>;
 
   const dot = Math.max(2, Math.min(24, unitsToPx(units, p.boxHeight)));
   const widthControl = (wide: boolean) => group
-    ? <div key="width" className={`flex shrink-0 items-center gap-2 px-1 text-xs text-white ${styleDisabled ? "opacity-40" : ""}`}>
+    ? <div key="width" className={`flex shrink-0 items-center gap-2 px-1 text-xs text-white ${wide ? "" : "w-41"} ${styleDisabled ? "opacity-40" : ""}`}>
       <Slider aria-label="Толщина линии" title="Толщина линии" className={wide ? "w-40" : "w-24"} min={WIDTH_MIN} max={WIDTH_MAX} step={1} value={[units]} disabled={styleDisabled} onValueChange={(value) => p.onPrefs(widthPatch(group, value[0] ?? units))} />
       <span aria-hidden className="grid size-6 shrink-0 place-items-center"><span className="rounded-full" style={{ width: dot, height: dot, backgroundColor: color, opacity: styleTool === "marker" ? MARKER_OPACITY : 1 }} /></span>
       <span className="w-5 text-right tabular-nums">{units}</span>
     </div>
-    : <div key="width" role="group" aria-label="Размер текста" className={`flex shrink-0 items-center gap-0.5 ${styleDisabled ? "opacity-40" : ""}`}>{TEXT_SIZES.map((size) => <Button key={size.value} type="button" variant="ghost" size="icon-sm" title={size.label} aria-label={size.label} aria-pressed={textSize === size.value} disabled={styleDisabled} className={`text-xs font-semibold ${textSize === size.value ? activeClass : inactiveClass}`} onClick={() => p.onPrefs({ textSize: size.value })}>{size.short}</Button>)}</div>;
+    : <div key="width" role="group" aria-label="Размер текста" className={`flex shrink-0 items-center justify-center gap-0.5 ${wide ? "" : "w-41"} ${styleDisabled ? "opacity-40" : ""}`}>{TEXT_SIZES.map((size) => <Button key={size.value} type="button" variant="ghost" size="icon-sm" title={size.label} aria-label={size.label} aria-pressed={textSize === size.value} disabled={styleDisabled} className={`text-xs font-semibold ${textSize === size.value ? activeClass : inactiveClass}`} onClick={() => p.onPrefs({ textSize: size.value })}>{size.short}</Button>)}</div>;
 
   const undoButton = <Button key="undo" type="button" variant="ghost" size="icon" title="Отменить (Ctrl+Z)" aria-label="Отменить" aria-keyshortcuts="Control+Z" className={`${sizeClass} ${inactiveClass}`} disabled={!p.canUndo} onClick={p.onUndo}><Undo2 size={18} /></Button>;
   const redoButton = <Button key="redo" type="button" variant="ghost" size="icon" title="Повторить (Ctrl+Shift+Z)" aria-label="Повторить" aria-keyshortcuts="Control+Shift+Z Control+Y" className={`${sizeClass} ${inactiveClass}`} disabled={!p.canRedo} onClick={p.onRedo}><Redo2 size={18} /></Button>;
@@ -190,5 +191,5 @@ export function AnnotationToolbar(p: Props) {
     ];
   }
 
-  return <div role="toolbar" aria-label="Инструменты пометок" aria-orientation={vertical ? "vertical" : "horizontal"} onPointerDown={keepFocus} onMouseDown={keepFocus} className={`annotation-toolbar flex touch-manipulation items-center gap-1 rounded-2xl border border-white/15 bg-[#12243a]/95 p-1.5 shadow-2xl ${vertical ? "max-h-full flex-col overflow-y-auto" : "max-w-full overflow-x-auto"}`}>{items}</div>;
+  return <div role="toolbar" aria-label="Инструменты пометок" aria-orientation={vertical ? "vertical" : "horizontal"} onPointerDown={keepFocus} onMouseDown={keepFocus} className={`annotation-toolbar touch-manipulation items-center gap-1 rounded-2xl border border-white/15 bg-[#12243a]/95 p-1.5 shadow-2xl ${pair ? "grid max-h-full grid-cols-2 justify-items-center overflow-y-auto [scrollbar-width:none]" : vertical ? "flex max-h-full flex-col overflow-y-auto [scrollbar-width:none]" : "flex max-w-full overflow-x-auto"}`}>{items}</div>;
 }

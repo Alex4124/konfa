@@ -20,7 +20,7 @@ import { useHubHistory } from "@/hooks/use-surface-hub";
 import type { WorkspaceFollow } from "@/hooks/use-workspace-view";
 import { defaultToolFor, resolveEscape, toolbarLayoutFor, type HotkeyAction, type PrefsPatch, type TextSize } from "@/lib/annotation-tools";
 import { fitStrip } from "@/lib/tile-grid";
-import { boardRange, docSurface, parseSurface, workspaceLayout } from "@/lib/workspace";
+import { boardRange, docSurface, parseSurface, workspaceLayout, type WorkspaceLayout } from "@/lib/workspace";
 import type { Member, UiTool, WorkspaceView } from "@/lib/confa-types";
 
 type Size = { width: number; height: number };
@@ -64,7 +64,8 @@ function typing(target: EventTarget | null): boolean {
 export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, renderTile, layer, follow, host, upload, expanded, onExpand, onCollapse, onShowShare, recording = false }: Props) {
   const [focus, setFocus] = useState<WorkspacePart>("board");
   const [area, setArea] = useState<Size>(EMPTY);
-  const [columnWidth, setColumnWidth] = useState(0);
+  const [column, setColumn] = useState<Size>(EMPTY); // the parts and the toolbar beside or under them
+  const [orientation, setOrientation] = useState<WorkspaceLayout["orientation"]>(); // the parts' last side (lib/workspace)
   const [stage, setStage] = useState(NO_STAGE);
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
   const [editing, setEditing] = useState<{ part: WorkspacePart; color: string; size: TextSize } | null>(null); // the open text editor, if any
@@ -81,14 +82,14 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   // The tiles' layers read the same key with the same fallback, so they draw with what the toolbar shows.
   const [armed, setArmed] = useArmedTool(toolKey, defaultToolFor({ armedByDefault: layer.armedByDefault, coarse, lastDrawTool: prefs.lastDrawTool }));
   const tool: UiTool = canDraw ? armed : "view";
-  const layout = workspaceLayout({ width: area.width, height: area.height, boardCollapsed: view.boardCollapsed, docCollapsed: view.docCollapsed, hasDoc: Boolean(view.doc), isHost });
+  const layout = workspaceLayout({ width: area.width, height: area.height, boardCollapsed: view.boardCollapsed, docCollapsed: view.docCollapsed, hasDoc: Boolean(view.doc), isHost, previous: orientation });
   const docId = view.doc?.id ?? null;
   const boardShown = layout.board === "pane";
   const docShown = layout.doc === "pane" && docId !== null;
   const active: WorkspacePart | null = boardShown && (focus === "board" || !docShown) ? "board" : docShown ? "doc" : null;
   const toolbarVisible = canDraw && active !== null && !recording;
-  const toolbarLayout = toolbarLayoutFor({ expanded: false, coarse, short, areaWidth: columnWidth > 0 ? Math.max(1, columnWidth - ROW_MARGIN) : 0 });
-  const column = toolbarVisible && toolbarLayout.placement === "column";
+  const toolbarLayout = toolbarLayoutFor({ expanded: false, coarse, short, areaWidth: column.width > 0 ? Math.max(1, column.width - ROW_MARGIN) : 0, areaHeight: column.height > 0 ? Math.max(1, column.height - ROW_MARGIN) : 0 });
+  const inColumn = toolbarVisible && toolbarLayout.placement === "column";
   // The cameras above the parts: as tall as the viewer's camera size allows and their rows need.
   const strip = !expanded && !recording && !layout.grid ? fitStrip(members.length, "top", cameraSize, stage, { width: stage.vw, height: stage.vh }) : null;
   const stripShown = Boolean(strip && strip.extent > 0);
@@ -109,6 +110,8 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const shownEditing = editing && (editing.part === "board" ? boardShown : docShown) ? editing : null;
   const paneWidth = layout.orientation === "row" && boardShown && layout.doc === "pane" ? area.width / 2 : area.width;
   if (openPicker && !toolbarVisible) setOpenPicker(null);
+  // The side the parts keep near the line; the unmeasured first frame is not remembered.
+  if (area.width > 0 && area.height > 0 && layout.orientation !== orientation) setOrientation(layout.orientation);
   if (clearing && (!toolbarVisible || (clearing.part === "doc" && clearing.docId !== docId))) setClearing(null);
 
   // Measured before the first paint too: an unmeasured frame showed the full toolbar and no camera strip for a moment.
@@ -118,7 +121,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     const win = rootElement.ownerDocument.defaultView;
     const size = (target: Element, rect: { width: number; height: number }) => {
       const width = Math.round(rect.width), height = Math.round(rect.height);
-      if (target === columnElement) setColumnWidth(width);
+      if (target === columnElement) setColumn((current) => current.width === width && current.height === height ? current : { width, height });
       else if (target === rootElement) {
         const vw = win?.innerWidth ?? 0, vh = win?.innerHeight ?? 0;
         setStage((current) => current.width === width && current.height === height && current.vw === vw && current.vh === vh ? current : { width, height, vw, vh });
@@ -219,12 +222,12 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   return <div ref={rootRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0e192c]" onPointerDownCapture={commitTexts}>
     {strip && stripShown && <TileStrip members={members} renderTile={renderTile} placement="top" strip={strip} />}
 
-    {!recording && <div className="flex min-h-11 shrink-0 items-center gap-2 px-3 pt-2">
+    {!recording && <div className="flex min-h-11 shrink-0 items-center gap-2 px-3 pt-2 short:min-h-9 short:pt-1">
       <Presentation size={18} className="shrink-0 text-[#9af4e7]" />
-      <span className="truncate text-sm font-semibold max-sm:hidden">Доска и материалы</span>
+      <span className="truncate text-sm font-semibold max-sm:hidden short:hidden">Доска и материалы</span>
       {host
-        ? <Button type="button" variant="secondary" size="sm" aria-pressed={view.allDraw} title={view.allDraw ? "Сейчас рисуют все ученики. Выключить — останутся только вызванные к доске" : "Включить, чтобы рисовать могли все ученики. Вызвать одного — кнопка «К доске» в списке участников"} className={`text-white hover:bg-[#3e5673] ${view.allDraw ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => host.setAllDraw(!view.allDraw)}><Users />Все ученики рисуют: {view.allDraw ? "да" : "нет"}</Button>
-        : canDraw && <span className="rounded-full bg-[#6de7d4]/15 px-2.5 py-1 text-xs font-medium text-[#9af4e7]">Вы у доски — можно рисовать</span>}
+        ? <Button type="button" variant="secondary" size="sm" aria-pressed={view.allDraw} aria-label={`Все ученики рисуют: ${view.allDraw ? "да" : "нет"}`} title={view.allDraw ? "Сейчас рисуют все ученики. Выключить — останутся только вызванные к доске" : "Включить, чтобы рисовать могли все ученики. Вызвать одного — кнопка «К доске» в списке участников"} className={`text-white hover:bg-[#3e5673] max-sm:size-8 max-sm:px-0 ${view.allDraw ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => host.setAllDraw(!view.allDraw)}><Users /><span className="max-sm:hidden">Все ученики рисуют: {view.allDraw ? "да" : "нет"}</span></Button>
+        : canDraw && <span className="min-w-0 truncate rounded-full bg-[#6de7d4]/15 px-2.5 py-1 text-xs font-medium text-[#9af4e7]"><span className="max-sm:hidden">Вы у доски — можно рисовать</span><span className="sm:hidden">Можно рисовать</span></span>}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         {stripShown && <CameraSizeControl className="bg-[#2d415d]" />}
         {onShowShare && <Button type="button" variant="secondary" size="sm" title="Показать демонстрацию экрана" aria-label="Показать демонстрацию экрана" className="bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={onShowShare}><MonitorUp /><span className="max-sm:hidden">Демонстрация</span></Button>}
@@ -232,7 +235,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
       </div>
     </div>}
 
-    <div ref={columnRef} className={`flex min-h-0 min-w-0 flex-1 ${column ? "flex-row" : "flex-col"}`}>
+    <div ref={columnRef} className={`flex min-h-0 min-w-0 flex-1 ${inColumn ? "flex-row" : "flex-col"}`}>
       <div ref={areaRef} className={`flex min-h-0 min-w-0 flex-1 gap-2 p-2 ${layout.orientation === "row" ? "flex-row" : "flex-col"}`}>
         {layout.board === "rail" && rail("board")}
         {layout.board === "pane" && <BoardPane api={boardApi} view={view} layer={layer} drawing={drawing} follow={follow} highlight={highlight("board")} orientation={layout.orientation} host={host} onActivate={setFocus} onEditing={onEditing} />}
@@ -240,7 +243,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
         {layout.doc === "pane" && <DocumentPane api={docApi} view={view} roomId={roomId} layer={layer} drawing={drawing} follow={follow} highlight={highlight("doc")} orientation={layout.orientation} host={host} upload={upload} onActivate={setFocus} onEditing={onEditing} />}
         {layout.doc === "rail" && rail("doc")}
       </div>
-      {toolbarVisible && <div className={column ? "order-first flex w-15 shrink-0 flex-col items-center justify-center py-1" : "flex min-h-12 shrink-0 justify-center px-1 pb-1"}>
+      {toolbarVisible && <div className={inColumn ? `order-first flex ${toolbarLayout.columns === 2 ? "w-28" : "w-15"} shrink-0 flex-col items-center py-1` : `flex min-h-12 shrink-0 px-1 ${expanded ? "pb-[max(0.25rem,env(safe-area-inset-bottom))]" : "pb-1"}`}>
         <AnnotationToolbar tool={tool} prefs={paperPrefs} layout={toolbarLayout} coarse={coarse} canModerate={layer.canModerate} markCount={1} clearLabel={active === "board" ? "Очистить всю доску" : "Стереть пометки на странице"}
           canUndo={history.canUndo} canRedo={history.canRedo} boxHeight={Math.max(240, paneWidth * 9 / 16)} editingText={Boolean(shownEditing)} textStyle={shownEditing ? { color: shownEditing.color, size: shownEditing.size } : null}
           openPicker={openPicker} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={requestClear}
