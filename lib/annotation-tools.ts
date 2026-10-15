@@ -296,7 +296,7 @@ const LAYOUTS = {
   column: Object.freeze({ placement: "column", compact: true, orientation: "vertical" }),
 } satisfies Record<string, ToolbarLayout>;
 
-// short = useMediaQuery("(max-height: 520px)") of the window that hosts the toolbar; areaWidth = px the toolbar may take
+// short = hooks/use-short-layout of the window that hosts the toolbar (kept while the keyboard is up); areaWidth = px the toolbar may take
 // (its column minus the placement's margins), <= 0 (not measured yet) counts as wide.
 // Returns shared frozen objects, so equal inputs give the same reference.
 export function toolbarLayoutFor(input: { expanded: boolean; coarse: boolean; short: boolean; areaWidth: number }): ToolbarLayout {
