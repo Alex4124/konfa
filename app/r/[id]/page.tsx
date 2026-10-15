@@ -153,18 +153,18 @@ export default function RoomPage() {
     <div className="mx-auto max-w-6xl px-5 py-4 sm:py-7">{homeLink}</div>
     <div className="mx-auto grid max-w-6xl gap-9 px-5 pb-14 pt-2 sm:pt-7 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:gap-16 lg:pt-16">
       <div className="relative aspect-video overflow-hidden rounded-[28px] border border-white/10 bg-[#1c2d46] shadow-2xl">
-        {camera ? <video ref={previewRef} autoPlay muted playsInline className="h-full w-full object-cover" /> : <div className="flex h-full flex-col items-center justify-center gap-3 text-slate-400"><span className="grid h-20 w-20 place-items-center rounded-full bg-white/10"><CameraOff size={30} /></span>Камера выключена</div>}
+        {camera ? <video ref={previewRef} autoPlay muted playsInline className="h-full w-full object-cover" /> : <div className="flex h-full flex-col items-center justify-center gap-2 pb-16 text-slate-400 sm:gap-3"><span className="grid size-14 place-items-center rounded-full bg-white/10 sm:size-20"><CameraOff size={26} /></span>Камера выключена</div>}
         <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-3">
-          <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={microphone ? "Выключить микрофон" : "Включить микрофон"} onClick={() => setMicrophone(!microphone)}>{microphone ? <Mic /> : <MicOff />}</Button>
-          <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={camera ? "Выключить камеру" : "Включить камеру"} onClick={() => setCamera(!camera)}>{camera ? <Camera /> : <CameraOff />}</Button>
+          <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={microphone ? "Выключить микрофон" : "Включить микрофон"} aria-label={microphone ? "Выключить микрофон" : "Включить микрофон"} onClick={() => setMicrophone(!microphone)}>{microphone ? <Mic /> : <MicOff />}</Button>
+          <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={camera ? "Выключить камеру" : "Включить камеру"} aria-label={camera ? "Выключить камеру" : "Включить камеру"} onClick={() => setCamera(!camera)}>{camera ? <Camera /> : <CameraOff />}</Button>
           {canFlip && <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={flipLabel(facing)} aria-label={flipLabel(facing)} onClick={() => setFacing(oppositeFacing(facing))}><SwitchCamera /></Button>}
         </div>
       </div>
       <div>
         <div className="mb-5 flex h-13 w-13 items-center justify-center rounded-2xl bg-[#6de7d4] text-[#10243a]">{room?.kind === "webinar" ? <Users size={25} /> : <Video size={25} />}</div>
-        <p className="mb-2 text-sm font-medium uppercase tracking-[.14em] text-[#6de7d4]">{room?.kind === "webinar" ? "Вебинар" : "Видеовстреча"}</p>
+        <p className={`mb-2 text-sm font-medium uppercase tracking-[.14em] text-[#6de7d4] ${room ? "" : "invisible"}`}>{room?.kind === "webinar" ? "Вебинар" : "Видеовстреча"}</p>
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Войти в комнату</h1>
-        <p className="mt-4 max-w-md text-base leading-relaxed text-slate-300">{isHostLink ? "Вы войдёте как ведущий. Ссылку для гостей можно будет скопировать внутри комнаты." : room?.kind === "webinar" ? "Вы войдёте как зритель. Ведущий сможет пригласить вас выступить." : "Проверьте имя, камеру и микрофон перед входом."}</p>
+        <p className="mt-4 min-h-[3lh] max-w-md text-base leading-relaxed text-slate-300 sm:min-h-[2lh]">{isHostLink ? "Вы войдёте как ведущий. Ссылку для гостей можно будет скопировать внутри комнаты." : room?.kind === "webinar" ? "Вы войдёте как зритель. Ведущий сможет пригласить вас выступить." : "Проверьте имя, камеру и микрофон перед входом."}</p>
         <label className="mt-8 block text-sm font-medium text-slate-200" htmlFor="display-name">Ваше имя</label>
         <input id="display-name" autoComplete="name" maxLength={60} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void join(); }} placeholder="Как к вам обращаться" className="mt-2 h-13 w-full max-w-md rounded-xl border border-[#435872] bg-[#1b2c46] px-4 text-base text-white outline-none placeholder:text-slate-400 focus:border-[#6de7d4]" />
         <div className="mt-5"><BackgroundPicker background={background} onChange={changeBackground} onError={setError} /></div>
