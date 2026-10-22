@@ -125,7 +125,7 @@ type MirrorProps = {
 export function MirrorPlaceholder({ sync, shareId, selfId, pipSupported, pipOpen, onPip, onShow }: MirrorProps) {
   const board = useBoard(sync.store);
   const foreign = useMemo(() => board.shareId === shareId ? board.items.reduce((total, item) => item.authorId !== selfId ? total + 1 : total, 0) : 0, [board, shareId, selfId]);
-  return <div className="grid h-full w-full place-items-center overflow-y-auto bg-[#0e192c] p-4 short:p-2">
+  return <div className="grid h-full w-full place-items-center overflow-y-auto bg-[#0e192c] p-4 text-white short:p-2">
     <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#17263e] p-5 text-center shadow-2xl short:p-3">
       <span className="mx-auto grid size-12 place-items-center rounded-full bg-[#6de7d4]/15 text-[#9af4e7] short:hidden"><MonitorUp size={22} /></span>
       <h2 className="mt-3 text-base font-semibold short:mt-0">Вы показываете весь экран</h2>

@@ -26,7 +26,7 @@ export default function EgressPage() {
   const query = useSearchParams();
   const url = query.get("url"), token = query.get("token"), access = query.get("access");
   const [connected, setConnected] = useState(false);
-  if (!url || !token || !access) return <main className="grid min-h-screen place-items-center bg-[#0e192c] text-white">Подготовка записи…</main>;
+  if (!url || !token || !access) return <main className="dark grid min-h-screen place-items-center bg-[#0e192c] text-white">Подготовка записи…</main>;
   return <LiveKitRoom serverUrl={url} token={token} connect onConnected={() => setConnected(true)} onDisconnected={() => console.log("END_RECORDING")}>
     <RecordingScene roomId={roomId} access={access} connected={connected} />
   </LiveKitRoom>;
@@ -98,7 +98,7 @@ function RecordingScene({ roomId, access, connected }: { roomId: string; access:
 
   useEffect(() => { if (ready) console.log("START_RECORDING"); }, [ready]);
 
-  return <main className="flex h-screen w-screen flex-col gap-3 overflow-hidden bg-[#0e192c] p-5 text-white">
+  return <main className="dark flex h-screen w-screen flex-col gap-3 overflow-hidden bg-[#0e192c] p-5 text-white">
     <RoomAudioRenderer />
     <div className="flex items-center justify-between"><strong className="text-xl">конфа<span className="text-[#6de7d4]">.</span></strong><span className="text-sm text-slate-400">{state?.room.kind === "webinar" ? "Вебинар" : "Встреча"}</span></div>
     {stage === "workspace" && view ? <WorkspaceArea view={view} roomId={roomId} isHost={false} canDraw={false} coarse={false} members={[]} renderTile={noTile} layer={workspaceLayer} follow={follow} host={null} upload={null} expanded onExpand={noop} onCollapse={noop} recording /> : screen ? <div className="relative min-h-0 flex-1 overflow-hidden rounded-2xl bg-[#17263e]">

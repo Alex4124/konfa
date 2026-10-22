@@ -37,10 +37,10 @@ type Props = {
 
 const ICONS: Record<ToolIconName, LucideIcon> = { Eye, WandSparkles, Pen, Highlighter, Minus, ArrowUpRight, RectangleHorizontal, Circle, Triangle, Hexagon, Type, FlaskConical, Grab, Eraser };
 const HOTKEY_TOOLS = (Object.keys(TOOL_META) as UiTool[]).filter((tool) => tool !== "view" && TOOL_META[tool].key);
-const activeClass = "bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7] hover:text-[#10243a]";
-const inactiveClass = "text-white hover:bg-white/10 hover:text-white";
-const popoverClass = "max-h-(--radix-popover-content-available-height) overflow-y-auto border-white/15 bg-[#1c2c45] p-1.5 text-white";
-const menuItemClass = "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none hover:bg-white/10 focus-visible:bg-white/10 disabled:pointer-events-none disabled:opacity-40";
+const activeClass = "bg-primary text-primary-foreground hover:bg-[var(--primary-hover)] hover:text-primary-foreground";
+const inactiveClass = "text-foreground hover:bg-accent hover:text-foreground";
+const popoverClass = "max-h-(--radix-popover-content-available-height) overflow-y-auto border-border bg-popover p-1.5 text-foreground";
+const menuItemClass = "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40";
 const keepFocus = (event: SyntheticEvent) => event.preventDefault();
 
 function widthPatch(group: WidthGroup, value: number): PrefsPatch {
@@ -80,13 +80,13 @@ export function AnnotationToolbar(p: Props) {
   // The text editor keeps focus while popovers open and close.
   const contentProps = { container: p.portalContainer, side, collisionPadding: 8, onOpenAutoFocus: (event: Event) => { if (p.editingText) event.preventDefault(); }, onCloseAutoFocus: (event: Event) => { if (p.editingText) event.preventDefault(); } } as const;
   const choose = (next: UiTool) => { p.onTool(next); p.onOpenPicker(null); };
-  const separator = (key: string) => <span key={key} aria-hidden className={pair ? "col-span-2 my-1 h-px w-full bg-white/20" : vertical ? "my-1 h-px w-6 shrink-0 bg-white/20" : "mx-1 h-6 w-px shrink-0 bg-white/20"} />;
+  const separator = (key: string) => <span key={key} aria-hidden className={pair ? "col-span-2 my-1 h-px w-full bg-border" : vertical ? "my-1 h-px w-6 shrink-0 bg-border" : "mx-1 h-6 w-px shrink-0 bg-border"} />;
 
   const toolButton = (next: UiTool, active = tool === next, label = TOOL_META[next].label) => <Button key={next} type="button" variant="ghost" size="icon" title={toolTitle(next)} aria-label={label} aria-pressed={active} aria-keyshortcuts={toolShortcut(next)} className={`${sizeClass} ${active ? activeClass : inactiveClass}`} onClick={() => choose(next)}><ToolIcon tool={next} /></Button>;
 
   const menuTool = (next: UiTool, onPick = () => choose(next)) => {
     const meta = TOOL_META[next];
-    return <button key={next} type="button" aria-pressed={tool === next} title={toolTitle(next)} className={`${menuItemClass} ${tool === next ? "bg-white/10" : ""}`} onClick={onPick}><ToolIcon tool={next} /><span className="min-w-0 flex-1">{meta.label}</span></button>;
+    return <button key={next} type="button" aria-pressed={tool === next} title={toolTitle(next)} className={`${menuItemClass} ${tool === next ? "bg-accent" : ""}`} onClick={onPick}><ToolIcon tool={next} /><span className="min-w-0 flex-1">{meta.label}</span></button>;
   };
 
   // Main button picks the remembered variant; the chevron opens the variants.
@@ -98,7 +98,7 @@ export function AnnotationToolbar(p: Props) {
     <PopoverContent {...contentProps} align="start" className={`w-64 ${popoverClass}`} aria-label={label}>{items}</PopoverContent>
   </Popover>;
 
-  const laserItems = LASER_STYLES.map((style) => <button key={style.value} type="button" aria-pressed={tool === "laser" && prefs.laserStyle === style.value} className={`${menuItemClass} ${tool === "laser" && prefs.laserStyle === style.value ? "bg-white/10" : ""}`} onClick={() => { p.onPrefs({ laserStyle: style.value }); choose("laser"); }}><LaserIcon ink={style.value === "ink"} /><span className="min-w-0 flex-1">{style.label}</span>{prefs.laserStyle === style.value && <Check size={16} />}</button>);
+  const laserItems = LASER_STYLES.map((style) => <button key={style.value} type="button" aria-pressed={tool === "laser" && prefs.laserStyle === style.value} className={`${menuItemClass} ${tool === "laser" && prefs.laserStyle === style.value ? "bg-accent" : ""}`} onClick={() => { p.onPrefs({ laserStyle: style.value }); choose("laser"); }}><LaserIcon ink={style.value === "ink"} /><span className="min-w-0 flex-1">{style.label}</span>{prefs.laserStyle === style.value && <Check size={16} />}</button>);
 
   // Compact: the laser button selects the laser, and once it is selected opens the laser variants.
   const laserButton = layout.compact
@@ -130,11 +130,11 @@ export function AnnotationToolbar(p: Props) {
     </PopoverContent>
   </Popover>;
 
-  const swatches = (close: boolean) => <div className="mx-auto grid w-fit grid-cols-3 gap-2">{PALETTE.map((choice) => <button key={choice.value} type="button" title={choice.label} aria-label={choice.label} aria-pressed={color === choice.value} className={`size-8 rounded-full border-2 outline-none focus-visible:ring-2 focus-visible:ring-[#6de7d4] ${color === choice.value ? "border-white" : "border-white/30"}`} style={{ backgroundColor: choice.value }} onClick={() => { p.onPrefs({ color: choice.value }); if (close) p.onOpenPicker(null); }} />)}</div>;
+  const swatches = (close: boolean) => <div className="mx-auto grid w-fit grid-cols-3 gap-2">{PALETTE.map((choice) => <button key={choice.value} type="button" title={choice.label} aria-label={choice.label} aria-pressed={color === choice.value} className={`size-8 rounded-full border-2 outline-none focus-visible:ring-2 focus-visible:ring-primary ${color === choice.value ? "border-foreground" : "border-border"}`} style={{ backgroundColor: choice.value }} onClick={() => { p.onPrefs({ color: choice.value }); if (close) p.onOpenPicker(null); }} />)}</div>;
 
   const dot = Math.max(2, Math.min(24, unitsToPx(units, p.boxHeight)));
   const widthControl = (wide: boolean) => group
-    ? <div key="width" className={`flex shrink-0 items-center gap-2 px-1 text-xs text-white ${wide ? "" : "w-41"} ${styleDisabled ? "opacity-40" : ""}`}>
+    ? <div key="width" className={`flex shrink-0 items-center gap-2 px-1 text-xs text-foreground ${wide ? "" : "w-41"} ${styleDisabled ? "opacity-40" : ""}`}>
       <Slider aria-label="Толщина линии" title="Толщина линии" className={wide ? "w-40" : "w-24"} min={WIDTH_MIN} max={WIDTH_MAX} step={1} value={[units]} disabled={styleDisabled} onValueChange={(value) => p.onPrefs(widthPatch(group, value[0] ?? units))} />
       <span aria-hidden className="grid size-6 shrink-0 place-items-center"><span className="rounded-full" style={{ width: dot, height: dot, backgroundColor: color, opacity: styleTool === "marker" ? MARKER_OPACITY : 1 }} /></span>
       <span className="w-5 text-right tabular-nums">{units}</span>
@@ -148,17 +148,17 @@ export function AnnotationToolbar(p: Props) {
     <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon" title="Ещё" aria-label="Ещё" className={`${sizeClass} ${inactiveClass}`}><Ellipsis size={18} /></Button></PopoverTrigger>
     <PopoverContent {...contentProps} align="end" className={`w-72 ${popoverClass}`} aria-label="Ещё">
       <button type="button" aria-pressed={prefs.showAuthors} className={menuItemClass} onClick={() => p.onPrefs({ showAuthors: !prefs.showAuthors })}><UserRound size={18} /><span className="flex-1">Показывать авторов</span>{prefs.showAuthors && <Check size={16} />}</button>
-      {layout.compact && <button type="button" disabled={!p.canRedo} className={menuItemClass} onClick={() => { p.onRedo(); p.onOpenPicker(null); }}><Redo2 size={18} /><span className="flex-1">Повторить</span><span className="text-xs text-slate-400">Ctrl+Shift+Z</span></button>}
+      {layout.compact && <button type="button" disabled={!p.canRedo} className={menuItemClass} onClick={() => { p.onRedo(); p.onOpenPicker(null); }}><Redo2 size={18} /><span className="flex-1">Повторить</span><span className="text-xs text-muted-foreground">Ctrl+Shift+Z</span></button>}
       {showFingers && <button type="button" aria-pressed={prefs.fingersDraw} className={menuItemClass} onClick={() => p.onFingersDraw(!prefs.fingersDraw)}><Pen size={18} /><span className="flex-1">Пальцы тоже рисуют</span>{prefs.fingersDraw && <Check size={16} />}</button>}
       <button type="button" aria-pressed={prefs.hotkeys} className={menuItemClass} onClick={() => p.onPrefs({ hotkeys: !prefs.hotkeys })}><Keyboard size={18} /><span className="flex-1">Горячие клавиши</span>{prefs.hotkeys && <Check size={16} />}</button>
-      {prefs.hotkeys && !coarse && <div className="grid grid-cols-2 gap-x-3 gap-y-1 px-3 pb-2 pt-1 text-xs text-slate-300">
-        {HOTKEY_TOOLS.map((hotkey) => <span key={hotkey} className="flex min-w-0 items-center gap-2"><Kbd className="bg-white/10 text-white">{TOOL_META[hotkey].key}</Kbd><span className="truncate">{TOOL_META[hotkey].label}</span></span>)}
-        <span className="flex items-center gap-2"><Kbd className="bg-white/10 text-white">Esc</Kbd>Просмотр</span>
-        <span className="col-span-2 flex items-center gap-2"><Kbd className="bg-white/10 text-white">Ctrl+Z</Kbd>/<Kbd className="bg-white/10 text-white">Ctrl+Shift+Z</Kbd>отменить / повторить</span>
+      {prefs.hotkeys && !coarse && <div className="grid grid-cols-2 gap-x-3 gap-y-1 px-3 pb-2 pt-1 text-xs text-[var(--text-subtle)]">
+        {HOTKEY_TOOLS.map((hotkey) => <span key={hotkey} className="flex min-w-0 items-center gap-2"><Kbd className="bg-secondary text-foreground">{TOOL_META[hotkey].key}</Kbd><span className="truncate">{TOOL_META[hotkey].label}</span></span>)}
+        <span className="flex items-center gap-2"><Kbd className="bg-secondary text-foreground">Esc</Kbd>Просмотр</span>
+        <span className="col-span-2 flex items-center gap-2"><Kbd className="bg-secondary text-foreground">Ctrl+Z</Kbd>/<Kbd className="bg-secondary text-foreground">Ctrl+Shift+Z</Kbd>отменить / повторить</span>
       </div>}
       {p.canModerate && <>
-        <div aria-hidden className="my-1 h-px bg-white/10" />
-        <button type="button" disabled={!p.markCount} className={`${menuItemClass} text-rose-200 hover:bg-rose-500/20 focus-visible:bg-rose-500/20`} onClick={() => { p.onOpenPicker(null); p.onClearRequest(); }}><Trash2 size={18} /><span className="flex-1">{p.clearLabel ?? `Очистить все пометки (${p.markCount})`}</span></button>
+        <div aria-hidden className="my-1 h-px bg-secondary" />
+        <button type="button" disabled={!p.markCount} className={`${menuItemClass} text-[var(--danger-text)] hover:bg-rose-500/20 focus-visible:bg-rose-500/20`} onClick={() => { p.onOpenPicker(null); p.onClearRequest(); }}><Trash2 size={18} /><span className="flex-1">{p.clearLabel ?? `Очистить все пометки (${p.markCount})`}</span></button>
       </>}
     </PopoverContent>
   </Popover>;
@@ -170,7 +170,7 @@ export function AnnotationToolbar(p: Props) {
       toolButton("view"), laserButton, separator("s1"),
       drawButton, otherButton,
       <Popover key="style" {...pickerProps("style")}>
-        <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon" disabled={styleDisabled} title={`Цвет и толщина: ${colorLabel}`} aria-label={`Цвет и толщина: ${colorLabel}`} className={`${sizeClass} ${inactiveClass}`}><span aria-hidden className="size-6 rounded-full border-2 border-white/80" style={{ backgroundColor: color }} /></Button></PopoverTrigger>
+        <PopoverTrigger asChild><Button type="button" variant="ghost" size="icon" disabled={styleDisabled} title={`Цвет и толщина: ${colorLabel}`} aria-label={`Цвет и толщина: ${colorLabel}`} className={`${sizeClass} ${inactiveClass}`}><span aria-hidden className="size-6 rounded-full border-2 border-border" style={{ backgroundColor: color }} /></Button></PopoverTrigger>
         <PopoverContent {...contentProps} align="center" className={`w-auto space-y-3 p-3 ${popoverClass}`} aria-label="Цвет и толщина">{swatches(false)}{widthControl(true)}</PopoverContent>
       </Popover>,
       undoButton, more,
@@ -183,7 +183,7 @@ export function AnnotationToolbar(p: Props) {
       toolButton("text"), toolButton("formula"), separator("s2"),
       toolButton("move"), toolButton("eraser"), separator("s3"),
       <Popover key="color" {...pickerProps("color")}>
-        <PopoverTrigger asChild><button type="button" disabled={styleDisabled} title={`Цвет пометок: ${colorLabel}`} aria-label={`Цвет пометок: ${colorLabel}`} className="mx-1 size-7 shrink-0 rounded-full border-2 border-white/80 outline-none focus-visible:ring-2 focus-visible:ring-[#6de7d4] focus-visible:ring-offset-2 focus-visible:ring-offset-[#12243a] disabled:opacity-40" style={{ backgroundColor: color }} /></PopoverTrigger>
+        <PopoverTrigger asChild><button type="button" disabled={styleDisabled} title={`Цвет пометок: ${colorLabel}`} aria-label={`Цвет пометок: ${colorLabel}`} className="mx-1 size-7 shrink-0 rounded-full border-2 border-border outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-popover disabled:opacity-40" style={{ backgroundColor: color }} /></PopoverTrigger>
         <PopoverContent {...contentProps} align="center" className={`w-auto p-3 ${popoverClass}`} aria-label="Цвет пометок">{swatches(true)}</PopoverContent>
       </Popover>,
       widthControl(false), separator("s4"),
@@ -191,5 +191,5 @@ export function AnnotationToolbar(p: Props) {
     ];
   }
 
-  return <div role="toolbar" aria-label="Инструменты пометок" aria-orientation={vertical ? "vertical" : "horizontal"} onPointerDown={keepFocus} onMouseDown={keepFocus} className={`annotation-toolbar touch-manipulation items-center gap-1 rounded-2xl border border-white/15 bg-[#12243a]/95 p-1.5 shadow-2xl ${pair ? "grid max-h-full grid-cols-2 justify-items-center overflow-y-auto [scrollbar-width:none]" : vertical ? "flex max-h-full flex-col overflow-y-auto [scrollbar-width:none]" : "flex max-w-full overflow-x-auto"}`}>{items}</div>;
+  return <div role="toolbar" aria-label="Инструменты пометок" aria-orientation={vertical ? "vertical" : "horizontal"} onPointerDown={keepFocus} onMouseDown={keepFocus} className={`annotation-toolbar touch-manipulation items-center gap-1 rounded-2xl border border-border bg-popover/95 p-1.5 text-foreground shadow-2xl ${pair ? "grid max-h-full grid-cols-2 justify-items-center overflow-y-auto [scrollbar-width:none]" : vertical ? "flex max-h-full flex-col overflow-y-auto [scrollbar-width:none]" : "flex max-w-full overflow-x-auto"}`}>{items}</div>;
 }

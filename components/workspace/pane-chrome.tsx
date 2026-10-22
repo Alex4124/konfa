@@ -29,7 +29,7 @@ export type PaneApi = { strip: StripApi | null; current?: () => number };
 export type PaneEditing = (part: WorkspacePart, style: { color: string; size: TextSize } | null) => void;
 
 export const PART_LABEL: Record<WorkspacePart, string> = { board: "Доска", doc: "Материалы" };
-export const headerButton = "text-slate-200 hover:bg-white/10 hover:text-white";
+export const headerButton = "text-foreground hover:bg-accent hover:text-foreground";
 
 // The board sits on the start side (left, or top when stacked), the material on the end side.
 function PanelIcon({ part, orientation, open, ...props }: { part: WorkspacePart; orientation: Orientation; open: boolean } & LucideProps) {
@@ -51,7 +51,7 @@ export function CollapseButton({ part, orientation, onClick }: { part: Workspace
 // «‹ 3 / 12 ›»: where the view is. The teacher steps to the neighbouring page or types a page number; students only see it.
 export function PageJump({ page, count, onJump, onStep }: { page: number; count: number; onJump?: (page: number) => void; onStep?: (by: -1 | 1) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
-  if (!onJump || !onStep) return <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300"><span className="max-sm:hidden">Стр. </span>{page + 1} / {count}</span>;
+  if (!onJump || !onStep) return <span className="whitespace-nowrap px-1 text-xs tabular-nums text-[var(--text-subtle)]"><span className="max-sm:hidden">Стр. </span>{page + 1} / {count}</span>;
   const go = () => {
     const wanted = Number.parseInt(draft ?? "", 10);
     setDraft(null);
@@ -60,7 +60,7 @@ export function PageJump({ page, count, onJump, onStep }: { page: number; count:
   return <div className="flex items-center" role="group" aria-label={`Страница ${page + 1} из ${count}`}>
     <Button type="button" variant="ghost" size="icon-sm" title="Предыдущая страница" aria-label="Предыдущая страница" disabled={page <= 0} className={`${headerButton} @max-[240px]/pane:hidden`} onClick={() => onStep(-1)}><ChevronLeft /></Button>
     <input aria-label="Номер страницы" inputMode="numeric" value={draft ?? String(page + 1)} title="Введите номер страницы и нажмите Enter"
-      className="h-7 w-9 rounded-md border border-white/15 bg-[#0e192c] text-center text-xs tabular-nums text-white outline-none focus:border-[#6de7d4] pointer-coarse:text-base"
+      className="h-7 w-9 rounded-md border border-border bg-background text-center text-xs tabular-nums text-foreground outline-none focus:border-primary pointer-coarse:text-base"
       onFocus={(event) => { setDraft(String(page + 1)); event.currentTarget.select(); }}
       onChange={(event) => setDraft(event.target.value.replace(/\D/g, "").slice(0, 3))}
       onBlur={() => setDraft(null)}
@@ -69,7 +69,7 @@ export function PageJump({ page, count, onJump, onStep }: { page: number; count:
         else if (event.key === "Escape") { setDraft(null); event.currentTarget.blur(); }
         event.stopPropagation();
       }} />
-    <span className="whitespace-nowrap px-1 text-xs tabular-nums text-slate-300">/ {count}</span>
+    <span className="whitespace-nowrap px-1 text-xs tabular-nums text-[var(--text-subtle)]">/ {count}</span>
     <Button type="button" variant="ghost" size="icon-sm" title="Следующая страница" aria-label="Следующая страница" disabled={page >= count - 1} className={`${headerButton} @max-[240px]/pane:hidden`} onClick={() => onStep(1)}><ChevronRight /></Button>
   </div>;
 }
@@ -86,13 +86,13 @@ type ShellProps = {
 
 export function PaneShell({ part, title, controls, highlight, onActivate, children, dropProps }: ShellProps) {
   return <section aria-label={PART_LABEL[part]} onPointerDownCapture={() => onActivate(part)} onFocusCapture={() => onActivate(part)} {...dropProps}
-    className={`@container/pane relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-[#14243a] transition-colors ${highlight ? "border-[#6de7d4]/55" : "border-white/10"}`}>
-    <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-white/10 pl-3 pr-1 @max-[200px]/pane:pl-1">
-      <PartIcon part={part} size={16} className="shrink-0 text-[#9af4e7] @max-[200px]/pane:hidden" />
+    className={`@container/pane relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card transition-colors ${highlight ? "border-primary/55" : "border-border"}`}>
+    <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border pl-3 pr-1 @max-[200px]/pane:pl-1">
+      <PartIcon part={part} size={16} className="shrink-0 text-[var(--teal-text)] @max-[200px]/pane:hidden" />
       <h2 className="min-w-0 flex-1 truncate text-sm font-medium @max-[200px]/pane:sr-only" title={title}>{title}</h2>
       <div className="ml-auto flex shrink-0 items-center gap-0.5">{controls}</div>
     </header>
-    <div className="relative min-h-0 flex-1 bg-[#0b1626]">{children}</div>
+    <div className="relative min-h-0 flex-1 bg-muted">{children}</div>
   </section>;
 }
 
@@ -101,12 +101,12 @@ export function PaneRail({ part, orientation, onExpand, busy = false }: { part: 
   const vertical = orientation === "row";
   const label = PART_LABEL[part];
   const content = <>
-    {busy ? <LoaderCircle size={18} className="animate-spin text-[#9af4e7]" /> : <PartIcon part={part} size={18} className="text-[#9af4e7]" />}
+    {busy ? <LoaderCircle size={18} className="animate-spin text-[var(--teal-text)]" /> : <PartIcon part={part} size={18} className="text-[var(--teal-text)]" />}
     <span className={`text-xs font-medium ${vertical ? "rotate-180 [writing-mode:vertical-rl]" : ""}`}>{label}</span>
     {onExpand && <PanelIcon part={part} orientation={orientation} open size={16} className={vertical ? "mt-auto" : "ml-auto"} />}
   </>;
-  const shape = `flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-[#14243a] text-slate-200 ${vertical ? "w-11 flex-col py-3" : "h-11 flex-row px-3"}`;
+  const shape = `flex shrink-0 items-center gap-2 rounded-xl border border-border bg-card text-foreground ${vertical ? "w-11 flex-col py-3" : "h-11 flex-row px-3"}`;
   if (!onExpand) return <div role="note" title={`Учитель свернул: ${label.toLowerCase()}`} className={shape}>{content}</div>;
   const action = part === "board" ? "Развернуть доску у всех" : "Развернуть материалы у всех";
-  return <button type="button" title={action} aria-label={action} className={`${shape} outline-none hover:bg-[#1c3150] hover:text-white focus-visible:ring-2 focus-visible:ring-[#6de7d4]`} onClick={onExpand}>{content}</button>;
+  return <button type="button" title={action} aria-label={action} className={`${shape} outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary`} onClick={onExpand}>{content}</button>;
 }

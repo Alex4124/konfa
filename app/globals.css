@@ -3,6 +3,39 @@
 @import "../vendor/shadcn-tailwind-4.13.0.css";
 
 :root {
+  --background: #f5f8fb;
+  --foreground: #12263b;
+  --card: #ffffff;
+  --card-foreground: #12263b;
+  --popover: #ffffff;
+  --popover-foreground: #12263b;
+  --primary: #087e77;
+  --primary-foreground: #ffffff;
+  --secondary: #e7eff3;
+  --secondary-foreground: #17354a;
+  --muted: #eef3f6;
+  --muted-foreground: #526779;
+  --accent: #e2f3f0;
+  --accent-foreground: #075f5a;
+  --destructive: #bc374a;
+  --border: #d7e2e9;
+  --input: #c5d3dc;
+  --ring: #087e77;
+  --radius: .85rem;
+  --panel-soft: #eaf1f5;
+  --control: #e5eef2;
+  --control-hover: #d6e7eb;
+  --control-active: #087e77;
+  --control-active-foreground: #ffffff;
+  --primary-hover: #096d68;
+  --text-subtle: #526779;
+  --teal-text: #076e67;
+  --danger-text: #a5293c;
+  --warning-text: #875f00;
+  color-scheme: light;
+}
+
+.dark {
   --background: #0e192c;
   --foreground: #f7fafc;
   --card: #17263e;
@@ -21,8 +54,17 @@
   --border: #3b5069;
   --input: #3b5069;
   --ring: #6de7d4;
-  --radius: .85rem;
-  color-scheme: dark; /* the app is always dark: date and time pickers, autofill, scrollbars */
+  --panel-soft: #20344e;
+  --control: #2d415d;
+  --control-hover: #3e5673;
+  --control-active: #317b75;
+  --control-active-foreground: #ffffff;
+  --primary-hover: #96f5e7;
+  --text-subtle: #cbd5e1;
+  --teal-text: #9af4e7;
+  --danger-text: #fda4af;
+  --warning-text: #fde68a;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -52,7 +94,6 @@
 
 /* The room's landscape-phone layout: html[data-short], set by hooks/use-short-layout (kept while the keyboard has the height). */
 @custom-variant short (&:where([data-short] *));
-/* The app has no light theme: shadcn's dark: styles must not follow the system theme (no element has .dark). */
 @custom-variant dark (&:where(.dark, .dark *));
 /* Text and formula marks (lib/annotation-geometry TEXT_FONT): Arimo has Arial's metrics and ships with the site, so a mark
    breaks and fits its plate the same on every device; Android has no Arial and drew it in Roboto. Bold only (TEXT_WEIGHT).
@@ -79,9 +120,10 @@ button:not(:disabled) { cursor: pointer; }
 }
 /* The room never scrolls: no rubber band on iOS, no pull-to-refresh on Android that would drop the lesson. */
 html[data-lesson-room], html[data-lesson-room] body { overscroll-behavior: none; }
-.home-shell { background: radial-gradient(circle at 80% 35%, #25436b 0, transparent 37%), radial-gradient(circle at 13% 86%, #17334a 0, transparent 30%), #0e192c; }
+.home-shell { background: radial-gradient(circle at 80% 35%, #d9f2ee 0, transparent 37%), radial-gradient(circle at 13% 86%, #e2edf6 0, transparent 30%), var(--background); }
+.dark .home-shell { background: radial-gradient(circle at 80% 35%, #25436b 0, transparent 37%), radial-gradient(circle at 13% 86%, #17334a 0, transparent 30%), #0e192c; }
 .brand-mark { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 14px; background: #6de7d4; color: #10243a; }
 .preview-tile { display: flex; height: 80px; align-items: center; justify-content: center; border-radius: 14px; background: #334a67; position: relative; }
 .preview-tile span { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: #6de7d4; color: #10243a; font-weight: 700; }
 .preview-tile small { position: absolute; left: 10px; bottom: 7px; font-size: 11px; color: white; }
-.preview-control { display: inline-grid; height: 38px; width: 38px; place-items: center; border-radius: 50%; background: #2a405e; color: white; }
+.preview-control { display: inline-grid; height: 38px; width: 38px; place-items: center; border-radius: 50%; background: var(--control); color: var(--foreground); }

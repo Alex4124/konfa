@@ -46,8 +46,8 @@ export function AuthorMarks({ sync, shareId, authorId, canModerate }: Props) {
   }
 
   return <div className="flex shrink-0 items-center gap-1.5">
-    <span className="whitespace-nowrap text-xs text-slate-300">{marksCountLabel(count)}</span>
-    {erasable && <Button type="button" variant={confirming ? "destructive" : "ghost"} size={confirming ? "xs" : "icon-xs"} title="Стереть пометки участника" aria-label={confirming ? `Стереть ${count}? Нажмите ещё раз для подтверждения` : "Стереть пометки участника"} disabled={busy} className={confirming ? "" : "text-slate-300 hover:bg-white/10 hover:text-white"} onBlur={() => setConfirming(false)} onClick={() => void erase()}><Eraser />{confirming && `Стереть ${count}?`}</Button>}
+    <span className="whitespace-nowrap text-xs text-[var(--text-subtle)]">{marksCountLabel(count)}</span>
+    {erasable && <Button type="button" variant={confirming ? "destructive" : "ghost"} size={confirming ? "xs" : "icon-xs"} title="Стереть пометки участника" aria-label={confirming ? `Стереть ${count}? Нажмите ещё раз для подтверждения` : "Стереть пометки участника"} disabled={busy} className={confirming ? "" : "text-[var(--text-subtle)] hover:bg-accent hover:text-foreground"} onBlur={() => setConfirming(false)} onClick={() => void erase()}><Eraser />{confirming && `Стереть ${count}?`}</Button>}
   </div>;
 }
 
@@ -62,11 +62,11 @@ export function DepartedAuthors({ sync, shareId, presentIds, canModerate }: { sy
   }, [board, shareId, presentIds]);
   if (!authors.size) return null;
   return <>
-    <p className="px-2 pb-2 pt-1 text-xs uppercase tracking-[.12em] text-slate-400">Вышли</p>
+    <p className="px-2 pb-2 pt-1 text-xs uppercase tracking-[.12em] text-muted-foreground">Вышли</p>
     {[...authors].map(([id, name]) => {
       const label = authorLabel(name, id, sync.store.nameOf) || "Участник";
-      return <div key={id} className="mb-2 rounded-xl bg-[#20344e] p-3">
-        <div className="flex items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-semibold text-slate-300">{label.charAt(0).toUpperCase()}</span><p className="min-w-0 flex-1 truncate text-sm font-medium text-slate-200">{label}</p><AuthorMarks sync={sync} shareId={shareId} authorId={id} canModerate={canModerate} /></div>
+      return <div key={id} className="mb-2 rounded-xl bg-[var(--panel-soft)] p-3">
+        <div className="flex items-center gap-2"><span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-secondary text-sm font-semibold text-[var(--text-subtle)]">{label.charAt(0).toUpperCase()}</span><p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{label}</p><AuthorMarks sync={sync} shareId={shareId} authorId={id} canModerate={canModerate} /></div>
       </div>;
     })}
   </>;

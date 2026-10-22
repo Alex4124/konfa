@@ -13,7 +13,7 @@ import { DOC_GAP, docSurface } from "@/lib/workspace";
 import type { WorkspaceDoc, WorkspaceView } from "@/lib/confa-types";
 
 const ACCEPT = ".pdf,.pptx,.ppt,.odp,.docx,.doc,.odt,.rtf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp";
-const menuItem = "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm outline-none hover:bg-white/10 focus-visible:bg-white/10 disabled:pointer-events-none disabled:opacity-40";
+const menuItem = "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent disabled:pointer-events-none disabled:opacity-40";
 
 function pageUrl(roomId: string, doc: Pick<WorkspaceDoc, "id" | "token">, page: number): string {
   return `/api/rooms/${roomId}/documents/${doc.id}/pages/${page}?t=${encodeURIComponent(doc.token)}`;
@@ -29,13 +29,13 @@ function PageImage({ roomId, doc, page }: { roomId: string; doc: WorkspaceDoc; p
     {/* eslint-disable-next-line @next/next/no-img-element -- a signed, private page image */}
     <img key={src} src={src} alt="" draggable={false} decoding="async" onLoad={() => setLoaded(src)} onError={() => setFailed(src)} className="pointer-events-none absolute inset-0 h-full w-full select-none bg-white object-fill" />
     {loaded !== src && failed !== src && <BlankPage page={page} busy />}
-    {failed === src && <div className="absolute inset-0 grid place-items-center bg-white p-4 text-center text-sm text-slate-500">Не удалось загрузить страницу</div>}
+    {failed === src && <div className="absolute inset-0 grid place-items-center bg-white p-4 text-center text-sm text-muted-foreground">Не удалось загрузить страницу</div>}
   </>;
 }
 
 function BlankPage({ page, busy = false }: { page: number; busy?: boolean }) {
-  return <div className="absolute inset-0 grid place-items-center bg-white text-slate-300">
-    {busy ? <LoaderCircle className="size-6 animate-spin text-slate-400" /> : <span className="text-2xl font-semibold tabular-nums">{page + 1}</span>}
+  return <div className="absolute inset-0 grid place-items-center bg-white text-[var(--text-subtle)]">
+    {busy ? <LoaderCircle className="size-6 animate-spin text-muted-foreground" /> : <span className="text-2xl font-semibold tabular-nums">{page + 1}</span>}
   </div>;
 }
 
@@ -51,11 +51,11 @@ function uploadText(upload: MaterialUpload): string {
 function UploadBanner({ upload, onCancel }: { upload: MaterialUpload; onCancel: () => void }) {
   const progress = upload.progress;
   const share = progress?.stage === "upload" && progress.total > 0 ? progress.done / progress.total : progress?.stage === "finish" ? 1 : null;
-  return <div role="status" className="absolute inset-x-2 top-2 z-30 flex items-center gap-3 rounded-lg border border-white/15 bg-[#1c2c45]/95 px-3 py-2 text-sm shadow-xl">
-    <LoaderCircle size={18} className="shrink-0 animate-spin text-[#9af4e7]" />
+  return <div role="status" className="absolute inset-x-2 top-2 z-30 flex items-center gap-3 rounded-lg border border-border bg-popover/95 px-3 py-2 text-sm shadow-xl">
+    <LoaderCircle size={18} className="shrink-0 animate-spin text-[var(--teal-text)]" />
     <div className="min-w-0 flex-1">
       <p className="truncate">{uploadText(upload)}</p>
-      {share !== null && <div className="mt-1.5 h-1 overflow-hidden rounded bg-white/10"><div className="h-full bg-[#6de7d4] transition-[width]" style={{ width: `${Math.round(share * 100)}%` }} /></div>}
+      {share !== null && <div className="mt-1.5 h-1 overflow-hidden rounded bg-muted"><div className="h-full bg-primary transition-[width]" style={{ width: `${Math.round(share * 100)}%` }} /></div>}
     </div>
     <Button type="button" variant="ghost" size="sm" className={headerButton} onClick={onCancel}>Отменить</Button>
   </div>;
@@ -67,14 +67,14 @@ function MaterialsMenu({ view, host, busy, onPick }: { view: WorkspaceView; host
   const run = (action: () => void) => { setOpen(false); action(); };
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" title="Материалы урока" className={headerButton}><FolderOpen /><span className="max-lg:hidden">Материалы</span></Button></PopoverTrigger>
-    <PopoverContent align="end" collisionPadding={8} className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto border-white/15 bg-[#1c2c45] p-1.5 text-white">
+    <PopoverContent align="end" collisionPadding={8} className="max-h-(--radix-popover-content-available-height) w-72 overflow-y-auto border-border bg-popover p-1.5 text-foreground">
       <button type="button" disabled={busy} className={menuItem} onClick={() => run(onPick)}><Upload size={16} />Загрузить файл…</button>
-      {documents.length > 0 && <p className="px-2.5 pb-1 pt-2 text-xs uppercase tracking-[.12em] text-slate-400">Загруженные</p>}
+      {documents.length > 0 && <p className="px-2.5 pb-1 pt-2 text-xs uppercase tracking-[.12em] text-muted-foreground">Загруженные</p>}
       {documents.map((item) => <div key={item.id} className="flex items-center gap-1">
         <button type="button" aria-current={view.doc?.id === item.id} className={`${menuItem} flex-1`} onClick={() => run(() => host.selectDoc(item.id))}>
-          {view.doc?.id === item.id ? <Check size={16} className="shrink-0 text-[#9af4e7]" /> : <FileText size={16} className="shrink-0" />}
+          {view.doc?.id === item.id ? <Check size={16} className="shrink-0 text-[var(--teal-text)]" /> : <FileText size={16} className="shrink-0" />}
           <span className="min-w-0 flex-1 truncate">{item.name}</span>
-          <span className="shrink-0 text-xs tabular-nums text-slate-400">{item.pageCount} стр.</span>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{item.pageCount} стр.</span>
         </button>
         <Button type="button" variant="ghost" size="icon-sm" title={`Удалить «${item.name}»`} aria-label={`Удалить «${item.name}»`} className={headerButton} onClick={() => run(() => host.deleteDoc(item.id, item.name))}><Trash /></Button>
       </div>)}
@@ -152,13 +152,13 @@ export function DocumentPane({ view, roomId, layer, drawing, follow, highlight, 
         <PageImage roomId={roomId} doc={doc} page={index} />
         <SurfaceLayer hub={layer.hub} id={docSurface(doc.id, index)} slot={slot} selfId={layer.selfId} canDraw={layer.canDraw} canModerate={layer.canModerate} armedByDefault={layer.armedByDefault} coarse={layer.coarse} sharingScreen={layer.sharingScreen} toolKey={drawing.toolKey} color={drawing.color} label={`Пометки на странице ${index + 1}`} onEditing={(style) => onEditing("doc", style)} />
       </>} /> : host && <div className="flex h-full flex-col items-center justify-center-safe gap-3 overflow-y-auto p-4 text-center sm:p-6 short:gap-2 short:p-3">
-      <span className="grid size-12 shrink-0 place-items-center rounded-full bg-[#6de7d4]/15 text-[#9af4e7] max-sm:hidden short:hidden [@media(max-height:640px)]:hidden"><Upload size={22} /></span>
+      <span className="grid size-12 shrink-0 place-items-center rounded-full bg-primary/15 text-[var(--teal-text)] max-sm:hidden short:hidden [@media(max-height:640px)]:hidden"><Upload size={22} /></span>
       <p className="text-sm font-medium">Перетащите сюда PDF, PowerPoint, Word или картинку</p>
-      <p className="max-w-xs text-xs leading-relaxed text-slate-400 max-sm:hidden short:hidden [@media(max-height:640px)]:hidden">До 100 страниц. Вы прокручиваете материал — ученики видят то же место и могут приближать его.</p>
-      <Button type="button" disabled={Boolean(upload)} className="bg-[#6de7d4] text-[#10243a] hover:bg-[#96f5e7]" onClick={pick}>Выбрать файл</Button>
-      {(view.documents?.length ?? 0) > 0 && <p className="text-xs text-slate-400">Или откройте загруженный в меню «Материалы»</p>}
+      <p className="max-w-xs text-xs leading-relaxed text-muted-foreground max-sm:hidden short:hidden [@media(max-height:640px)]:hidden">До 100 страниц. Вы прокручиваете материал — ученики видят то же место и могут приближать его.</p>
+      <Button type="button" disabled={Boolean(upload)} className="bg-primary text-primary-foreground hover:bg-[var(--primary-hover)]" onClick={pick}>Выбрать файл</Button>
+      {(view.documents?.length ?? 0) > 0 && <p className="text-xs text-muted-foreground">Или откройте загруженный в меню «Материалы»</p>}
     </div>}
     {upload && host && <UploadBanner upload={upload} onCancel={host.cancelUpload} />}
-    {dragging && <div className="pointer-events-none absolute inset-2 z-40 grid place-items-center rounded-lg border-2 border-dashed border-[#6de7d4] bg-[#0e192c]/80 text-sm font-medium text-[#9af4e7]">Отпустите, чтобы загрузить</div>}
+    {dragging && <div className="pointer-events-none absolute inset-2 z-40 grid place-items-center rounded-lg border-2 border-dashed border-primary bg-background/80 text-sm font-medium text-[var(--teal-text)]">Отпустите, чтобы загрузить</div>}
   </PaneShell>;
 }

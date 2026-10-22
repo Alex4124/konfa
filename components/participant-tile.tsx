@@ -30,7 +30,7 @@ export const ParticipantTile = memo(function ParticipantTile({ name, self, raise
     {trackRef && media.camera
       ? <VideoTrack trackRef={trackRef} className="h-full w-full object-contain" />
       : <div className="grid h-full place-items-center pb-5 @[160px]:pb-0"><span className="grid h-6 w-6 place-items-center rounded-full bg-[#6de7d4]/20 text-xs font-semibold text-[#9af4e7] @[120px]:h-8 @[120px]:w-8 @[120px]:text-sm @[160px]:h-12 @[160px]:w-12 @[160px]:text-lg">{name.charAt(0).toUpperCase()}</span></div>}
-    <span className="absolute bottom-1 left-1 flex max-w-[calc(100%-8px)] items-center gap-1 rounded bg-[#0b1728]/70 px-1.5 py-0.5 text-xs @[220px]:bottom-2 @[220px]:left-2 @[220px]:max-w-[calc(100%-16px)] @[220px]:px-2 @[220px]:py-1">
+    <span className="absolute bottom-1 left-1 flex max-w-[calc(100%-8px)] items-center gap-1 rounded bg-[#0b1728]/70 px-1.5 py-0.5 text-xs text-white @[220px]:bottom-2 @[220px]:left-2 @[220px]:max-w-[calc(100%-16px)] @[220px]:px-2 @[220px]:py-1">
       {canSpeak && !media.microphone && <MicOff size={12} role="img" aria-label="Микрофон выключен" className="shrink-0 text-rose-300" />}
       <span className="truncate">{name}{self ? " (вы)" : ""}</span>
       {raisedHand && <span className="shrink-0">✋</span>}

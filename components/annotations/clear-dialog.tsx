@@ -12,13 +12,13 @@ type Props = {
 
 export function ClearAllDialog({ open, count, container, onOpenChange, onConfirm }: Props) {
   return <AlertDialog open={open} onOpenChange={onOpenChange}>
-    <AlertDialogContent container={container} size="sm" className="border-white/15 bg-[#1c2c45] text-white">
+    <AlertDialogContent container={container} size="sm" className="border-border bg-popover text-foreground">
       <AlertDialogHeader>
         <AlertDialogTitle>Стереть все пометки?</AlertDialogTitle>
         <AlertDialogDescription>Будут удалены все пометки ({count}), включая пометки других участников. Вернуть их можно кнопкой «Отменить» (Ctrl+Z).</AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogCancel className="border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white">Отмена</AlertDialogCancel>
+        <AlertDialogCancel className="border-border bg-transparent text-foreground hover:bg-accent hover:text-foreground">Отмена</AlertDialogCancel>
         <AlertDialogAction variant="destructive" onClick={onConfirm}>Стереть всё</AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>

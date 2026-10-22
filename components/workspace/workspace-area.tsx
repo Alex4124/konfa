@@ -230,19 +230,19 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const onEditing = (part: WorkspacePart, style: { color: string; size: TextSize } | null) => setEditing(style ? { part, ...style } : null);
   const rail = (part: WorkspacePart) => <PaneRail key={`${part}-rail`} part={part} orientation={layout.orientation} busy={part === "doc" && Boolean(upload)} onExpand={host ? () => host.collapse(part, false) : undefined} />;
 
-  return <div ref={rootRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#0e192c]" onPointerDownCapture={commitTexts}>
+  return <div ref={rootRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background" onPointerDownCapture={commitTexts}>
     {strip && stripShown && <TileStrip members={members} renderTile={renderTile} placement="top" strip={strip} />}
 
     {!recording && <div className="flex min-h-11 shrink-0 items-center gap-2 px-3 pt-2 short:min-h-9 short:pt-1">
-      <Presentation size={18} className="shrink-0 text-[#9af4e7]" />
+      <Presentation size={18} className="shrink-0 text-[var(--teal-text)]" />
       <span className="truncate text-sm font-semibold max-sm:hidden short:hidden">Доска и материалы</span>
       {host
-        ? <Button type="button" variant="secondary" size="sm" aria-pressed={view.allDraw} aria-label={`Все ученики рисуют: ${view.allDraw ? "да" : "нет"}`} title={view.allDraw ? "Сейчас рисуют все ученики. Выключить — останутся только вызванные к доске" : "Включить, чтобы рисовать могли все ученики. Вызвать одного — кнопка «К доске» в списке участников"} className={`text-white hover:bg-[#3e5673] max-sm:size-8 max-sm:px-0 ${view.allDraw ? "bg-[#317b75]" : "bg-[#2d415d]"}`} onClick={() => host.setAllDraw(!view.allDraw)}><Users /><span className="max-sm:hidden">Все ученики рисуют: {view.allDraw ? "да" : "нет"}</span></Button>
-        : canDraw && <span className="min-w-0 truncate rounded-full bg-[#6de7d4]/15 px-2.5 py-1 text-xs font-medium text-[#9af4e7]"><span className="max-sm:hidden">Вы у доски — можно рисовать</span><span className="sm:hidden">Можно рисовать</span></span>}
+        ? <Button type="button" variant="secondary" size="sm" aria-pressed={view.allDraw} aria-label={`Все ученики рисуют: ${view.allDraw ? "да" : "нет"}`} title={view.allDraw ? "Сейчас рисуют все ученики. Выключить — останутся только вызванные к доске" : "Включить, чтобы рисовать могли все ученики. Вызвать одного — кнопка «К доске» в списке участников"} className={`hover:bg-[var(--control-hover)] max-sm:size-8 max-sm:px-0 ${view.allDraw ? "!bg-[var(--control-active)] !text-[var(--control-active-foreground)]" : "bg-[var(--control)] text-foreground"}`} onClick={() => host.setAllDraw(!view.allDraw)}><Users /><span className="max-sm:hidden">Все ученики рисуют: {view.allDraw ? "да" : "нет"}</span></Button>
+        : canDraw && <span className="min-w-0 truncate rounded-full bg-primary/15 px-2.5 py-1 text-xs font-medium text-[var(--teal-text)]"><span className="max-sm:hidden">Вы у доски — можно рисовать</span><span className="sm:hidden">Можно рисовать</span></span>}
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
-        {stripShown && <CameraSizeControl className="bg-[#2d415d]" />}
-        {onShowShare && <Button type="button" variant="secondary" size="sm" title="Показать демонстрацию экрана" aria-label="Показать демонстрацию экрана" className="bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={onShowShare}><MonitorUp /><span className="max-sm:hidden">Демонстрация</span></Button>}
-        <Button type="button" variant="secondary" size="icon-sm" title={expanded ? "Свернуть" : "Развернуть на весь экран"} aria-label={expanded ? "Свернуть" : "Развернуть на весь экран"} className="bg-[#2d415d] text-white hover:bg-[#3e5673]" onClick={expanded ? onCollapse : onExpand}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
+        {stripShown && <CameraSizeControl tone="light" className="bg-[var(--control)]" />}
+        {onShowShare && <Button type="button" variant="secondary" size="sm" title="Показать демонстрацию экрана" aria-label="Показать демонстрацию экрана" className="bg-[var(--control)] text-foreground hover:bg-[var(--control-hover)]" onClick={onShowShare}><MonitorUp /><span className="max-sm:hidden">Демонстрация</span></Button>}
+        <Button type="button" variant="secondary" size="icon-sm" title={expanded ? "Свернуть" : "Развернуть на весь экран"} aria-label={expanded ? "Свернуть" : "Развернуть на весь экран"} className="bg-[var(--control)] text-foreground hover:bg-[var(--control-hover)]" onClick={expanded ? onCollapse : onExpand}>{expanded ? <Minimize2 /> : <Maximize2 />}</Button>
       </div>
     </div>}
 
@@ -266,13 +266,13 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     </div>
 
     {host && <AlertDialog open={clearing?.part === "board"} onOpenChange={(open) => { if (!open) setClearing(null); }}>
-      <AlertDialogContent size="sm" className="border-white/15 bg-[#1c2c45] text-white">
+      <AlertDialogContent size="sm" className="border-border bg-popover text-foreground">
         <AlertDialogHeader>
           <AlertDialogTitle>Очистить всю доску?</AlertDialogTitle>
           <AlertDialogDescription>Все пометки на доске, сверху донизу, будут удалены у всех участников. Отменить это действие нельзя.</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel className="border-white/15 bg-transparent text-white hover:bg-white/10 hover:text-white">Отмена</AlertDialogCancel>
+          <AlertDialogCancel className="border-border bg-transparent text-foreground hover:bg-accent hover:text-foreground">Отмена</AlertDialogCancel>
           <AlertDialogAction variant="destructive" onClick={() => {
             host.clearBoard();
             boardApi.current?.strip?.rewind(); // a clean board starts from its top, for everyone

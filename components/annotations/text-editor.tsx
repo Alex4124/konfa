@@ -161,12 +161,12 @@ export function TextEditor({ editorRef, state, box, coarse, scale = 1, onChange,
       autoCapitalize={chem ? "off" : undefined}
       value={text}
       data-gesture-ignore
-      className={`absolute z-20 m-0 block resize-none overflow-hidden border-0 outline-none placeholder:text-slate-400 ${open ? "" : "pointer-events-none opacity-0"}`}
+      className={`absolute z-20 m-0 block resize-none overflow-hidden border-0 outline-none placeholder:text-muted-foreground ${open ? "" : "pointer-events-none opacity-0"}`}
       style={state ? {
         left, top, width: cssWidth, transform: k === 1 ? undefined : `scale(${k})`, transformOrigin: "0 0",
         fontFamily: TEXT_FONT, fontSize: editorFont, fontWeight: TEXT_WEIGHT, lineHeight: TEXT_LINE_HEIGHT, padding: `${TEXT_PAD_Y}em ${TEXT_PAD_X}em`, boxSizing: "border-box",
         color: state.color, caretColor: state.color, background: rgba(plate.fill, plate.fillOpacity), borderRadius: `${TEXT_PLATE_RADIUS_EM}em`,
-        boxShadow: `0 0 0 ${2 / k}px #6de7d4`, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "normal",
+        boxShadow: `0 0 0 ${2 / k}px var(--ring)`, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "normal",
       } : { left: 0, top: 0, width: 1, height: 1, fontSize: MIN_FONT_PX, padding: 0 }}
       onChange={(event) => { if (open) onChange(event.target.value); }}
       onKeyDown={(event) => {
@@ -197,14 +197,14 @@ export function TextEditor({ editorRef, state, box, coarse, scale = 1, onChange,
     />
     {/* data-text-editor: a press here is part of the editing, the workspace does not save the text on it. */}
     {showActions && <div ref={actionsRef} data-gesture-ignore data-text-editor className="absolute z-20 flex flex-col items-start gap-1.5 text-base" style={{ left, top, transform: unscale === 1 ? undefined : `scale(${unscale})`, transformOrigin: "0 0" }} onPointerDown={keepFocus} onMouseDown={keepFocus}>
-      {preview && <svg aria-hidden width={preview.width} height={preview.height} viewBox={`0 0 ${preview.width} ${preview.height}`} className="block max-w-none rounded-md shadow-lg ring-1 ring-[#6de7d4]/70"><TextMark data={preview.data} box={preview.view} /></svg>}
+      {preview && <svg aria-hidden width={preview.width} height={preview.height} viewBox={`0 0 ${preview.width} ${preview.height}`} className="block max-w-none rounded-md shadow-lg ring-1 ring-primary/70"><TextMark data={preview.data} box={preview.view} /></svg>}
       {chem && <div ref={signsRef} className="flex max-w-[min(92vw,31rem)] flex-wrap gap-1">
-        {FORMULA_SIGNS.map((sign) => <button key={sign.title} type="button" title={sign.title} aria-label={sign.title} className={`grid place-items-center rounded-lg bg-[#1c2c45] px-1.5 text-base font-semibold text-white shadow-lg hover:bg-[#2a3f61] ${coarse ? "h-10 min-w-10" : "h-8 min-w-8"}`} onClick={() => typeSign(sign)}>{sign.label}</button>)}
+        {FORMULA_SIGNS.map((sign) => <button key={sign.title} type="button" title={sign.title} aria-label={sign.title} className={`grid place-items-center rounded-lg bg-popover px-1.5 text-base font-semibold text-foreground shadow-lg hover:bg-accent ${coarse ? "h-10 min-w-10" : "h-8 min-w-8"}`} onClick={() => typeSign(sign)}>{sign.label}</button>)}
       </div>}
       {(coarse || counter) && <div className="flex items-center gap-1.5">
-        {coarse && <button type="button" className="flex h-10 items-center gap-1.5 rounded-lg bg-[#6de7d4] px-3 text-base font-semibold text-[#10243a] shadow-lg" onClick={onCommit}><Check size={18} />Готово</button>}
-        {coarse && <button type="button" title="Закрыть без сохранения" aria-label="Закрыть без сохранения" className="grid size-10 place-items-center rounded-lg bg-[#1c2c45] text-base text-white shadow-lg" onClick={onCancel}><X size={18} /></button>}
-        {counter && <span className="rounded-md bg-[#0e192c]/85 px-2 py-0.5 text-xs tabular-nums text-slate-200">{text.length}/{TEXT_MAX_CHARS}</span>}
+        {coarse && <button type="button" className="flex h-10 items-center gap-1.5 rounded-lg bg-primary px-3 text-base font-semibold text-primary-foreground shadow-lg" onClick={onCommit}><Check size={18} />Готово</button>}
+        {coarse && <button type="button" title="Закрыть без сохранения" aria-label="Закрыть без сохранения" className="grid size-10 place-items-center rounded-lg bg-popover text-base text-foreground shadow-lg" onClick={onCancel}><X size={18} /></button>}
+        {counter && <span className="rounded-md bg-background/85 px-2 py-0.5 text-xs tabular-nums text-foreground">{text.length}/{TEXT_MAX_CHARS}</span>}
       </div>}
     </div>}
   </>;

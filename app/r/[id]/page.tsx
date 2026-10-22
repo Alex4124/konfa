@@ -6,6 +6,7 @@ import { LiveKitRoom } from "@livekit/components-react";
 import { createLocalVideoTrack, type LocalVideoTrack, type RoomOptions } from "livekit-client";
 import { ArrowLeft, Camera, CameraOff, Mic, MicOff, SwitchCamera, Video, Users, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Switch } from "@/components/ui/switch";
 import { RoomView } from "@/components/room-view";
 import { primeTextFont } from "@/components/annotations/text-measure";
@@ -141,7 +142,7 @@ export default function RoomPage() {
     finally { setBusy(false); }
   }
 
-  if (conferenceEnded) return <main className="grid min-h-dvh place-items-center bg-[#0e192c] px-5 text-white"><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-slate-300">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => window.location.assign("/")}>На главную</Button></div></main>;
+  if (conferenceEnded) return <main className="relative grid min-h-dvh place-items-center bg-background px-5 text-foreground"><ThemeToggle compact className="absolute right-5 top-5" /><div className="text-center"><h1 className="text-3xl font-semibold">Конференция завершена</h1><p className="mt-3 text-[var(--text-subtle)]">Ведущий закончил конференцию для всех участников.</p><Button className="mt-6" onClick={() => window.location.assign("/")}>На главную</Button></div></main>;
 
   if (joined) return <LiveKitRoom token={joined.livekitToken} serverUrl={joined.livekitUrl} options={ROOM_OPTIONS} connect audio={joined.member.role !== "viewer" && microphone} video={false} onError={(cause) => setError(cause.message)} onDisconnected={() => setError("Связь с комнатой прервана. Обновите страницу для повторного входа.")}>
     <RoomView id={id} joined={joined} initialCamera={camera} initialFacing={facing} background={background} onBackgroundChange={changeBackground} onLeave={() => { setJoined(null); window.location.assign(joined.seriesUrl || "/"); }} onEnded={() => { setJoined(null); if (joined.seriesUrl) window.location.assign(joined.seriesUrl); else setConferenceEnded(true); }} connectionError={error} />
@@ -149,13 +150,13 @@ export default function RoomPage() {
 
   // The room can be missing, so leaving this page must bypass client-side routing.
   // eslint-disable-next-line @next/next/no-html-link-for-pages
-  const homeLink = <a href="/" className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white"><ArrowLeft size={17} /> На главную</a>;
+  const homeLink = <a href="/" className="inline-flex items-center gap-2 text-sm text-[var(--text-subtle)] hover:text-foreground"><ArrowLeft size={17} /> На главную</a>;
 
-  return <main className="prejoin min-h-dvh bg-[#0e192c] text-white">
-    <div className="mx-auto max-w-6xl px-5 py-4 sm:py-7">{homeLink}</div>
+  return <main className="prejoin min-h-dvh bg-background text-foreground">
+    <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-4 sm:py-7">{homeLink}<ThemeToggle compact /></div>
     <div className="mx-auto grid max-w-6xl gap-9 px-5 pb-14 pt-2 sm:pt-7 lg:grid-cols-[1.1fr_.9fr] lg:items-center lg:gap-16 lg:pt-16">
-      <div className="relative aspect-video overflow-hidden rounded-[28px] border border-white/10 bg-[#1c2d46] shadow-2xl">
-        {camera ? <video ref={previewRef} autoPlay muted playsInline className="h-full w-full object-cover" /> : <div className="flex h-full flex-col items-center justify-center gap-2 pb-16 text-slate-400 sm:gap-3"><span className="grid size-14 place-items-center rounded-full bg-white/10 sm:size-20"><CameraOff size={26} /></span>Камера выключена</div>}
+      <div className="relative aspect-video overflow-hidden rounded-[28px] border border-border bg-[#1c2d46] text-white shadow-2xl">
+        {camera ? <video ref={previewRef} autoPlay muted playsInline className="h-full w-full object-cover" /> : <div className="flex h-full flex-col items-center justify-center gap-2 pb-16 text-slate-300 sm:gap-3"><span className="grid size-14 place-items-center rounded-full bg-white/10 sm:size-20"><CameraOff size={26} /></span>Камера выключена</div>}
         <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 gap-3">
           <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={microphone ? "Выключить микрофон" : "Включить микрофон"} aria-label={microphone ? "Выключить микрофон" : "Включить микрофон"} onClick={() => setMicrophone(!microphone)}>{microphone ? <Mic /> : <MicOff />}</Button>
           <Button variant="secondary" size="icon-lg" className="rounded-full bg-[#314763] text-white hover:bg-[#405a76]" title={camera ? "Выключить камеру" : "Включить камеру"} aria-label={camera ? "Выключить камеру" : "Включить камеру"} onClick={() => setCamera(!camera)}>{camera ? <Camera /> : <CameraOff />}</Button>
@@ -163,18 +164,18 @@ export default function RoomPage() {
         </div>
       </div>
       <div>
-        <div className="mb-5 flex h-13 w-13 items-center justify-center rounded-2xl bg-[#6de7d4] text-[#10243a]">{room?.kind === "webinar" ? <Users size={25} /> : <Video size={25} />}</div>
-        <p className={`mb-2 text-sm font-medium uppercase tracking-[.14em] text-[#6de7d4] ${room ? "" : "invisible"}`}>{room?.kind === "webinar" ? "Вебинар" : "Видеовстреча"}</p>
+        <div className="mb-5 flex h-13 w-13 items-center justify-center rounded-2xl bg-primary text-primary-foreground">{room?.kind === "webinar" ? <Users size={25} /> : <Video size={25} />}</div>
+        <p className={`mb-2 text-sm font-medium uppercase tracking-[.14em] text-[var(--teal-text)] ${room ? "" : "invisible"}`}>{room?.kind === "webinar" ? "Вебинар" : "Видеовстреча"}</p>
         <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Войти в комнату</h1>
-        <p className="mt-4 min-h-[3lh] max-w-md text-base leading-relaxed text-slate-300 sm:min-h-[2lh]">{isHostLink ? "Вы войдёте как ведущий. Ссылку для гостей можно будет скопировать внутри комнаты." : room?.kind === "webinar" ? "Вы войдёте как зритель. Ведущий сможет пригласить вас выступить." : "Проверьте имя, камеру и микрофон перед входом."}</p>
-        <label className="mt-8 block text-sm font-medium text-slate-200" htmlFor="display-name">Ваше имя</label>
-        <input id="display-name" autoComplete="name" maxLength={60} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void join(); }} placeholder="Как к вам обращаться" className="mt-2 h-13 w-full max-w-md rounded-xl border border-[#435872] bg-[#1b2c46] px-4 text-base text-white outline-none placeholder:text-slate-400 focus:border-[#6de7d4]" />
+        <p className="mt-4 min-h-[3lh] max-w-md text-base leading-relaxed text-[var(--text-subtle)] sm:min-h-[2lh]">{isHostLink ? "Вы войдёте как ведущий. Ссылку для гостей можно будет скопировать внутри комнаты." : room?.kind === "webinar" ? "Вы войдёте как зритель. Ведущий сможет пригласить вас выступить." : "Проверьте имя, камеру и микрофон перед входом."}</p>
+        <label className="mt-8 block text-sm font-medium text-foreground" htmlFor="display-name">Ваше имя</label>
+        <input id="display-name" autoComplete="name" maxLength={60} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void join(); }} placeholder="Как к вам обращаться" className="mt-2 h-13 w-full max-w-md rounded-xl border border-input bg-card px-4 text-base text-foreground outline-none placeholder:text-muted-foreground focus:border-primary" />
         <div className="mt-5"><BackgroundPicker background={background} onChange={changeBackground} onError={setError} /></div>
-        <label className="mt-4 flex w-fit max-w-md items-center gap-3 text-sm text-slate-200"><Switch checked={noiseFilter && noiseSupported} disabled={!noiseSupported} onCheckedChange={setNoiseFilter} className="data-[state=checked]:bg-[#6de7d4] data-[state=unchecked]:bg-[#314763] [&_[data-slot=switch-thumb]]:!bg-white" /><span>Шумоподавление<span className="block text-xs text-slate-400">{noiseSupported ? "Убирает фоновый шум: клавиатуру, вентилятор, улицу" : "Недоступно в этом браузере"}</span></span></label>
-        <div className="mt-6"><Button className="h-13 rounded-xl bg-[#6de7d4] px-7 text-base font-semibold text-[#10243a] hover:bg-[#96f5e7]" disabled={busy || !room || room.status !== "open"} onClick={() => void join()}>{busy ? "Подключаем…" : "Войти"}</Button></div>
-        {error && <p role="alert" className="mt-4 max-w-md text-sm text-rose-300">{error}</p>}
-        {room?.status === "ended" && <p className="mt-4 text-rose-300">Эта комната уже завершена</p>}
-        <p className="mt-6 flex items-center gap-2 text-sm text-slate-400"><ShieldCheck size={17} /> Видеозапись включается ведущим вручную</p>
+        <label className="mt-4 flex w-fit max-w-md items-center gap-3 text-sm text-foreground"><Switch checked={noiseFilter && noiseSupported} disabled={!noiseSupported} onCheckedChange={setNoiseFilter} className="data-[state=checked]:bg-primary data-[state=unchecked]:bg-[#314763] [&_[data-slot=switch-thumb]]:!bg-white" /><span>Шумоподавление<span className="block text-xs text-muted-foreground">{noiseSupported ? "Убирает фоновый шум: клавиатуру, вентилятор, улицу" : "Недоступно в этом браузере"}</span></span></label>
+        <div className="mt-6"><Button className="h-13 rounded-xl bg-primary px-7 text-base font-semibold text-primary-foreground hover:bg-[var(--primary-hover)]" disabled={busy || !room || room.status !== "open"} onClick={() => void join()}>{busy ? "Подключаем…" : "Войти"}</Button></div>
+        {error && <p role="alert" className="mt-4 max-w-md text-sm text-[var(--danger-text)]">{error}</p>}
+        {room?.status === "ended" && <p className="mt-4 text-[var(--danger-text)]">Эта комната уже завершена</p>}
+        <p className="mt-6 flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck size={17} /> Видеозапись включается ведущим вручную</p>
       </div>
     </div>
   </main>;

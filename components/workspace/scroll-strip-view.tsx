@@ -300,7 +300,7 @@ export function ScrollStripView({ layout, pixelWidth, resetKey, fitAspect, host,
       onPointerMove={host ? (event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) dragTo(event); } : undefined}
       onPointerUp={host ? () => setDragLabel(null) : undefined} onPointerCancel={host ? () => setDragLabel(null) : undefined}>
       <div ref={thumbRef} className={`absolute inset-x-0 top-0 rounded-full ${host ? `bg-slate-500/70 hover:bg-slate-400/80 ${interaction === "draw" ? "pointer-events-auto cursor-pointer" : ""}` : "bg-slate-500/45"}`}>
-        {dragLabel && <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-[#0e192c] px-2 py-1 text-xs text-white shadow-xl">{dragLabel}</span>}
+        {dragLabel && <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 whitespace-nowrap rounded-md bg-background px-2 py-1 text-xs text-foreground shadow-xl">{dragLabel}</span>}
       </div>
     </div>
   </div>;

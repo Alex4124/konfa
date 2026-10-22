@@ -71,10 +71,10 @@ export function TileStrip({ members, renderTile, placement, strip }: { members: 
 }
 
 // «Мелкие — средние — крупные камеры»: how much room the strip may take, remembered on this device.
-export function CameraSizeControl({ className = "" }: { className?: string }) {
+export function CameraSizeControl({ className = "", tone = "dark" }: { className?: string; tone?: "dark" | "light" }) {
   const [size, setSize] = useCameraSize();
   return <div role="group" aria-label="Размер камер" className={`flex shrink-0 items-center gap-0.5 rounded-lg p-1 short:hidden ${className}`}>
-    {CAMERA_SIZES.map((item) => <Button key={item} type="button" variant="ghost" size="icon-xs" title={SIZE_LABEL[item]} aria-label={SIZE_LABEL[item]} aria-pressed={size === item} className={`text-white hover:bg-white/15 hover:text-white ${size === item ? "bg-white/20" : "text-white/70"}`} onClick={() => setSize(item)}>
+    {CAMERA_SIZES.map((item) => <Button key={item} type="button" variant="ghost" size="icon-xs" title={SIZE_LABEL[item]} aria-label={SIZE_LABEL[item]} aria-pressed={size === item} className={tone === "dark" ? `text-white hover:bg-white/15 hover:text-white ${size === item ? "bg-white/20" : "text-white/70"}` : `text-foreground hover:bg-accent hover:text-foreground ${size === item ? "bg-accent" : "text-muted-foreground"}`} onClick={() => setSize(item)}>
       <span aria-hidden className={`rounded-[2px] border-[1.5px] border-current ${SIZE_GLYPH[item]}`} />
     </Button>)}
   </div>;
