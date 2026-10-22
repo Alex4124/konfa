@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Maximize2, Minimize2, MonitorUp, Presentation, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { AnnotationToolbar, type ToolbarPicker } from "@/components/annotations/annotation-toolbar";
 import { ClearAllDialog } from "@/components/annotations/clear-dialog";
+import { FloatingParticipantsPanel } from "@/components/floating-participants-panel";
 import { BoardPane } from "@/components/workspace/board-pane";
 import { DocumentPane } from "@/components/workspace/document-pane";
 import { CameraSizeControl, TileGrid, TileStrip, type RenderTile } from "@/components/participant-tiles";
@@ -32,6 +33,7 @@ type Props = {
   coarse: boolean;
   members: Member[];
   renderTile: RenderTile;
+  renderParticipantList?: () => ReactNode;
   layer: WorkspaceLayerProps;
   follow: WorkspaceFollow;
   host: WorkspaceHostActions | null;
@@ -61,7 +63,8 @@ function typing(target: EventTarget | null): boolean {
 // The teacher's workspace on the stage: the endless board and the material side by side (stacked on narrow screens), each a
 // column the teacher scrolls and everyone follows. One toolbar for both: the tool and the ink are shared; undo, redo and
 // «Очистить» act on the active part, the one last pressed. Collapsing a part (teacher only) leaves a rail.
-export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, renderTile, layer, follow, host, upload, expanded, onExpand, onCollapse, onShowShare, recording = false }: Props) {
+export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, renderTile, renderParticipantList, layer, follow, host, upload, expanded, onExpand, onCollapse, onShowShare, recording = false }: Props) {
+  const short = useShortLayout();
   const [focus, setFocus] = useState<WorkspacePart>("board");
   const [area, setArea] = useState<Size>(EMPTY);
   const [column, setColumn] = useState<Size>(EMPTY); // the parts and the toolbar beside or under them
@@ -70,12 +73,13 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
   const [editing, setEditing] = useState<{ part: WorkspacePart; color: string; size: TextSize } | null>(null); // the open text editor, if any
   const [clearing, setClearing] = useState<Clearing | null>(null);
+  const [overlayCollapsed, setOverlayCollapsed] = useState(coarse || short);
+  const [wasExpanded, setWasExpanded] = useState(expanded);
   const rootRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
   const boardApi = useRef<PaneApi>(null);
   const docApi = useRef<PaneApi>(null);
-  const short = useShortLayout();
   const [cameraSize] = useCameraSize();
   const [prefs, updatePrefs] = useAnnotationPrefs();
   const toolKey = `ws:${view.id}`;
@@ -93,6 +97,8 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   // The cameras above the parts: as tall as the viewer's camera size allows and their rows need.
   const strip = !expanded && !recording && !layout.grid ? fitStrip(members.length, "top", cameraSize, stage, { width: stage.vw, height: stage.vh }) : null;
   const stripShown = Boolean(strip && strip.extent > 0);
+  const overlayShown = expanded && !recording && !layout.grid && Boolean(renderParticipantList);
+  const participantsOnTop = column.width >= column.height;
   // The surfaces undo and redo walk through: the active part's.
   const prefix = active === "board" ? boardRange(view.id).from : active === "doc" && docId ? `d:${docId}:` : NO_PREFIX;
   const history = useHubHistory(layer.hub, prefix);
@@ -113,6 +119,10 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   // The side the parts keep near the line; the unmeasured first frame is not remembered.
   if (area.width > 0 && area.height > 0 && layout.orientation !== orientation) setOrientation(layout.orientation);
   if (clearing && (!toolbarVisible || (clearing.part === "doc" && clearing.docId !== docId))) setClearing(null);
+  if (wasExpanded !== expanded) {
+    setWasExpanded(expanded);
+    if (expanded) setOverlayCollapsed(coarse || short);
+  }
 
   // Measured before the first paint too: an unmeasured frame showed the full toolbar and no camera strip for a moment.
   useLayoutEffect(() => {
@@ -153,6 +163,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     if (editing ? strips().some((strip) => strip && !strip.commitText()) : stroking()) return;
     setArmed(next);
     setOpenPicker(null);
+    if (expanded && next !== "view") setOverlayCollapsed(true);
   }
 
   async function step(direction: "undo" | "redo") {
@@ -212,7 +223,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
   // A press anywhere else in the workspace saves the open text (the text itself, its preview and buttons, the toolbar and its menus do not).
   function commitTexts(event: ReactPointerEvent<HTMLDivElement>) {
     const target = event.target as Element | null;
-    if (!editing || target?.closest?.("textarea, [data-text-editor], .annotation-toolbar, [data-slot=popover-content], [role=dialog], [role=alertdialog]")) return;
+    if (!editing || target?.closest?.("textarea, [data-text-editor], [data-participant-overlay], .annotation-toolbar, [data-slot=popover-content], [role=dialog], [role=alertdialog]")) return;
     for (const strip of strips()) strip?.commitText();
   }
 
@@ -235,7 +246,7 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
       </div>
     </div>}
 
-    <div ref={columnRef} className={`flex min-h-0 min-w-0 flex-1 ${inColumn ? "flex-row" : "flex-col"}`}>
+    <div ref={columnRef} className={`relative flex min-h-0 min-w-0 flex-1 ${inColumn ? "flex-row" : "flex-col"}`}>
       <div ref={areaRef} className={`flex min-h-0 min-w-0 flex-1 gap-2 p-2 ${layout.orientation === "row" ? "flex-row" : "flex-col"}`}>
         {layout.board === "rail" && rail("board")}
         {layout.board === "pane" && <BoardPane api={boardApi} view={view} layer={layer} drawing={drawing} follow={follow} highlight={highlight("board")} orientation={layout.orientation} host={host} onActivate={setFocus} onEditing={onEditing} />}
@@ -249,6 +260,9 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
           openPicker={openPicker} onOpenPicker={setOpenPicker} onTool={selectTool} onPrefs={changePrefs} onUndo={() => void step("undo")} onRedo={() => void step("redo")} onClearRequest={requestClear}
           onFingersDraw={(enabled) => updatePrefs({ fingersDraw: enabled })} />
       </div>}
+      {overlayShown && renderParticipantList && <FloatingParticipantsPanel boundaryRef={columnRef} members={members} renderTile={renderTile} renderParticipantList={renderParticipantList}
+        orientation={participantsOnTop ? "top" : "left"} collapsed={overlayCollapsed} onCollapsedChange={setOverlayCollapsed}
+        initialLeft={inColumn ? (toolbarLayout.columns === 2 ? 124 : 72) : 12} initialTop="12px" reservedBottom={toolbarVisible && !inColumn ? 64 : 12} />}
     </div>
 
     {host && <AlertDialog open={clearing?.part === "board"} onOpenChange={(open) => { if (!open) setClearing(null); }}>
