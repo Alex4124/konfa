@@ -12,6 +12,8 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 
+const CLIENT_TARGET = ["es2020", "safari15", "ios15", "chrome90", "edge90", "firefox90"];
+
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const managedLinux = readExecutionProfile() === "managed-linux";
@@ -54,6 +56,9 @@ export default defineConfig(async ({ command }) => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    // The browser bundle is lowered to iOS/iPadOS 15 and Chrome 90: Vite's default (Safari 16.4, Chrome 111) left
+    // iPhone 6s/7/SE and iPad Air 2/mini 4 on "This page couldn't load". Missing APIs come from public/legacy.js.
+    environments: { client: { build: { target: CLIENT_TARGET } } },
     server: {
       ...(managedLinux
         ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] }
