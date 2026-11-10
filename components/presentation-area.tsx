@@ -14,7 +14,7 @@ import { useShortLayout } from "@/hooks/use-short-layout";
 import { defaultToolFor, toolbarLayoutFor } from "@/lib/annotation-tools";
 import { fitStrip } from "@/lib/tile-grid";
 import { stripPlacement } from "@/lib/view-transform";
-import type { RoomState, UiTool } from "@/lib/confa-types";
+import type { RoomState } from "@/lib/confa-types";
 
 type Member = RoomState["members"][number];
 // Room the toolbar container leaves: px-1 in a row (py-1 in a column); the expanded overlay starts at left-3 and stops short
@@ -28,7 +28,7 @@ const columnPx = (columns: 1 | 2) => columns === 2 ? 112 : 60;
 type Area = { width: number; height: number; vw: number; vh: number };
 // The top-right cluster over the share (RoomView passes its own buttons in the same look).
 export const clusterButton = "bg-[#0e192c]/85 text-white shadow-xl hover:bg-[#243c5a] max-md:size-9 short:size-9";
-export type PresentationLayerProps = Omit<ComponentProps<typeof AnnotationLayer>, "shareId" | "toolbar" | "portalContainer" | "onToolChange">;
+export type PresentationLayerProps = Omit<ComponentProps<typeof AnnotationLayer>, "shareId" | "toolbar" | "portalContainer">;
 type Props = {
   state: RoomState;
   activeScreen: TrackReference;
@@ -114,17 +114,13 @@ export function PresentationArea({ state, activeScreen, members, expanded, onExp
     return () => observer.disconnect();
   }, [expanded]);
 
-  function toolChanged(tool: UiTool) {
-    if (expanded && tool !== "view") setOverlayCollapsed(true);
-  }
-
   return <div ref={presentationRef} style={{ "--cluster": `${clusterWidth}px` } as CSSProperties} className={`group/presentation relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#0e192c] ${participantsOnTop ? "flex-col" : "flex-row"}`}>
     {stripShown && <TileStrip members={members} renderTile={renderTile} placement={participantsOnTop ? "top" : "left"} strip={strip} />}
 
     <div ref={columnRef} className={`relative flex min-h-0 min-w-0 flex-1 ${placement === "column" ? "flex-row" : "flex-col"}`}>
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black">
         {placeholder ?? <SharedScreen trackRef={activeScreen} frameless zoomable interaction={interaction} resetKey={shareId} onFrameChange={setFrameAspect}>
-          {shareId && <AnnotationLayer key={shareId} {...layerProps} shareId={shareId} toolbar={{ container: toolbarContainer, layout: toolbarLayout }} onToolChange={toolChanged} />}
+          {shareId && <AnnotationLayer key={shareId} {...layerProps} shareId={shareId} toolbar={{ container: toolbarContainer, layout: toolbarLayout }} />}
         </SharedScreen>}
         {!expanded && !placeholder && <span className="pointer-events-none absolute left-3 top-3 max-w-[min(50%,calc(100%-var(--cluster)-36px))] truncate rounded-lg bg-[#0e192c]/80 px-3 py-1.5 text-xs text-white short:hidden">{activeScreen.participant.name || "Демонстрация экрана"}</span>}
       </div>

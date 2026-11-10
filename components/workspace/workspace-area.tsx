@@ -163,7 +163,6 @@ export function WorkspaceArea({ view, roomId, isHost, canDraw, coarse, members, 
     if (editing ? strips().some((strip) => strip && !strip.commitText()) : stroking()) return;
     setArmed(next);
     setOpenPicker(null);
-    if (expanded && next !== "view") setOverlayCollapsed(true);
   }
 
   async function step(direction: "undo" | "redo") {
