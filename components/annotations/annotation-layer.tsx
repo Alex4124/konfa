@@ -41,7 +41,6 @@ type Props = {
   toolKey?: string; // the armed tool's key (default: shareId); the workspace's two parts share one
   hotkeysEnabled?: boolean; // false for a workspace part that is not the active one
   label?: string; // the svg's accessible name
-  onToolChange?: (tool: UiTool) => void;
   onNotice?: (text: string, id: string) => void; // the layer's own notices (PiP: sonner toasts would land in the hidden opener)
   // A tile of the workspace's strips: no toolbar, hotkeys or dialog of its own; the workspace drives it through `handle`.
   color?: string; // ink for new marks instead of prefs.color (white paper has its own)
@@ -260,7 +259,7 @@ const AuthorChips = memo(function AuthorChips({ store, items, live, box, scale, 
   return <g>{items.map((item) => hiddenIds.has(item.id) || item.id === dragged || item.id === editingId ? null : <MarkChip key={item.id} item={item} box={box} scale={scale} nameOf={store.nameOf} />)}</g>;
 });
 
-export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, sharingScreen = false, toolbar, portalContainer, showSavedAuthors, toolKey, hotkeysEnabled = true, label = "Пометки поверх демонстрации", onToolChange, onNotice, color, tone = "dark", handle, onEditing, onEdge }: Props) {
+export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canModerate = false, armedByDefault = false, coarse = false, sharingScreen = false, toolbar, portalContainer, showSavedAuthors, toolKey, hotkeysEnabled = true, label = "Пометки поверх демонстрации", onNotice, color, tone = "dark", handle, onEditing, onEdge }: Props) {
   const [prefs, updatePrefs] = useAnnotationPrefs();
   const [armed, setArmed] = useArmedTool(toolKey ?? shareId, defaultToolFor({ armedByDefault, coarse, lastDrawTool: prefs.lastDrawTool }));
   const [openPicker, setOpenPicker] = useState<ToolbarPicker | null>(null);
@@ -832,7 +831,6 @@ export function AnnotationLayer({ shareId, sync, selfId, canDraw = false, canMod
     setArmed(next);
     setOpenPicker(null);
     live.set({ hoverId: null });
-    onToolChange?.(next);
   }
 
   async function step(direction: "undo" | "redo") {
